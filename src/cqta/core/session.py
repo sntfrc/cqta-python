@@ -13,7 +13,6 @@ class ReceiveResult:
     is_new: bool
     restarted: bool
     retransmissions: list[CQtaPacket] = field(default_factory=list)
-    unavailable: list[int] = field(default_factory=list)
 
 
 class CQtaSession:
@@ -98,12 +97,9 @@ class CQtaSession:
         result = ReceiveResult(is_new=is_new, restarted=restarted)
         for number in packet.requests:
             original = self.sent.get(number)
-            if original is None:
-                result.unavailable.append(number)
-            elif not original.text:
-                self.pending_empty_confirmations.add(number)
-            elif number == 0:
-                result.unavailable.append(number)
-            else:
+            if original is not None and original.text and number != 0:
                 result.retransmissions.append(original)
+            elif number < self.next_outgoing:
+                # Empty, forgotten, or non-retransmittable (packet 0): confirm as empty so the peer stops asking
+                self.pending_empty_confirmations.add(number)
         return result

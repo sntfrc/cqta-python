@@ -444,7 +444,7 @@ class ChatModel:
                 self._append_broadcast(p.source, p.text, None, now)
                 mentioned = self.notify["mention"] and self.callsign.lower() in p.text.lower()
                 is_cq = self.notify["cq"] and p.text.startswith("CQ")
-                if self.notify["broadcast"] or mentioned or is_cq:
+                if p.text != "QRT" and (self.notify["broadcast"] or mentioned or is_cq):
                     if self.notify["broadcast"] or (is_cq and not mentioned):
                         title = f"CQ from {p.source}" if is_cq else f"Broadcast from {p.source}"
                     else:
@@ -458,6 +458,9 @@ class ChatModel:
         if p.destination != self.callsign:
             return
 
+        existing = self._convs.get(p.source)
+        if not p.text and (existing is None or existing.session is None):
+            return  # empty packets (beacons, keepalives) only update last heard; they never open a QSO
         if self.open_qso(p.source) is None:
             return
         conv = self._convs[p.source]
@@ -476,11 +479,8 @@ class ChatModel:
             self._append_line(conv, Line(now, "peer", p.source, p.text))
             if self._active_peer != conv.peer:
                 conv.unread += 1
-            if self.notify["direct"]:
+            if self.notify["direct"] and p.text != "QRT":
                 self.on_notification("direct", p.source, p.text, p.source)
-        for n in result.unavailable:
-            self._append_line(conv, Line(time.time(), "system", "Cannot retransmit",
-                                         f"packet {n} is not in this run's send history"))
         for original in result.retransmissions:
             self._send_retransmission(conv, original.number)
 

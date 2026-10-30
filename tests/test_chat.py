@@ -68,3 +68,44 @@ def test_broadcast_and_cq():
     assert got[0][0] is None and got[0][1].cq_from == "AA1AA"
     big = "x" * 300
     assert not a.send_broadcast(big)
+
+
+def test_beacon_only_updates_last_heard():
+    a, b, _ = pair()
+    a._transmit_beacon()
+    assert "AA1AA" in b._stations and not b._convs
+
+
+def test_forgotten_packets_are_confirmed_as_empty():
+    a, b, drop = pair()
+    a.open_qso("BB2BB")
+    a.send_text("BB2BB", "one")
+    drop["on"] = True
+    a.send_text("BB2BB", "two")
+    drop["on"] = False
+    a.send_text("BB2BB", "three")
+    assert b._convs["AA1AA"].session.missing == [1]
+    a._convs["BB2BB"].session.sent.pop(1)  # as if the history was lost
+    b.request_missing("AA1AA")
+    lines = [l.label for l in a.conversation_lines("BB2BB")]
+    assert "Cannot retransmit" not in lines
+    a.send_text("BB2BB", "four")
+    assert b._convs["AA1AA"].session.missing == []
+
+
+def test_qrt_does_not_notify():
+    a, b, _ = pair()
+    seen = []
+    b.on_notification = lambda *args: seen.append(args)
+    b.notify["direct"] = True
+    a.open_qso("BB2BB")
+    a.send_text("BB2BB", "hi")
+    a.close_qso("BB2BB")
+    assert [s[2] for s in seen] == ["hi"]
+
+
+def test_empty_directed_packet_does_not_open_qso():
+    from cqta.core.protocol import CQtaPacket, encode
+    a, b, _ = pair()
+    b.receive(encode(CQtaPacket("AA1AA", "BB2BB", 0)), bytes([10, 0, 0, 1]))
+    assert "AA1AA" in b._stations and not b._convs
