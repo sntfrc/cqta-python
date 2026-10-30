@@ -24,35 +24,25 @@ from .tun import elevate
 MODES = ("meshtastic", "kiss", "afsk")
 MODE_NAMES = {"meshtastic": "Meshtastic", "kiss": "KISS TNC", "afsk": "AFSK modem", "network": "Network interface"}
 
-DESCRIPTION = """\
-CQta - amateur radio chat, QSO, ping and file transfer over Meshtastic, KISS TNCs and AFSK audio.
-
-Started without arguments, CQta opens its graphical interface. With --tunnel ADDRESS it runs without any GUI and keeps an
-operating-system network interface (a TUN/TAP device) up, bridged to the chosen radio link, until it is terminated
-with Ctrl+C (or SIGTERM), then tears everything down.
-
-The command line never asks for administrator rights: creating the interface needs them, so start CQta as root
-(sudo cqta --tunnel ...) on macOS and Linux, or from a terminal started with "Run as administrator" on Windows. If the
-rights are missing, CQta says so and exits with an error."""
-
 EPILOG = """\
 connection selection:
   cqta --tunnel
       Reconnect with exactly the connection used last in the GUI (all its settings). Fails if there is none.
-  cqta --tunnel [ADDRESS] --mode MODE --callsign CALL [mode options]
-      Use the given connection for this session only. Nothing is remembered, and every option that is not given takes its default value (never the one saved by the GUI). --callsign is required. ADDRESS (a.b.c.d or a.b.c.d/prefix, prefix 1-30) is the IPv4 address of this station and is required for kiss and afsk; with meshtastic the address comes from the node and must not be given. Options of other modes are rejected.
-  The Network interface mode of the GUI cannot be used here: it is a plain UDP transport and has no tunnel.
+  cqta --tunnel [ADDRESS] CONNECTION-OPTIONS [--beacon-interval SECONDS --callsign CALL]
 
 defaults:
-  No beacons are sent unless --beacon-interval is given. KISS: 127.0.0.1 port 8001 channel 0 MTU 256. AFSK: system default audio devices, level 0.8, TX delay 500 ms, tail 60 ms, CSMA on, hold-off 600 ms, jitter 600 ms, 4 frames per transmission.
+  No beacons are sent unless --beacon-interval is given. KISS: 127.0.0.1:8001/0, MTU 256. Meshtastic: auto-detected serial port or Bluetooth node, or TCP 127.0.0.1:4403. AFSK: system default audio devices, level 0.8, TX delay 500 ms, tail 60 ms, CSMA on, hold-off 600 ms, jitter 600 ms, 4 frames per transmission.
 
 examples:
   cqta --dump-config       (prints the --tunnel command line equivalent to the GUI's current connection)
   sudo cqta --tunnel
-  sudo cqta --tunnel --mode meshtastic --meshtastic-serial /dev/ttyUSB0 --callsign IU4AAJ --beacon-interval 120
-  sudo cqta --tunnel --mode meshtastic --meshtastic-tcp 192.168.1.50 --callsign IU4AAJ
-  sudo cqta --tunnel 44.130.1.5/16 --mode kiss --kiss-host 127.0.0.1 --kiss-port 8001 --callsign IU4AAJ
-  sudo cqta --tunnel 10.115.4.7/16 --mode afsk --input-device "USB Audio CODEC" --output-device "USB Audio CODEC" --callsign IU4AAJ
+  sudo cqta --tunnel --meshtastic-serial /dev/ttyUSB0 --beacon-interval 120
+  sudo cqta --tunnel --meshtastic-tcp 192.168.1.50
+  sudo cqta --tunnel --meshtastic-ble          (the strongest Bluetooth node)
+  sudo cqta --tunnel 44.130.1.5/16 --kiss 127.0.0.1:8001/0
+  sudo cqta --tunnel 44.130.1.5/16 --kiss          (the same: 127.0.0.1:8001/0 is the default)
+  sudo cqta --tunnel 10.115.4.7/16 --afsk --input-device "USB Audio CODEC" --output-device "USB Audio CODEC"
+  sudo cqta --tunnel 10.115.4.7/16 --afsk          (AFSK with the default audio devices and settings)
   cqta --list serial          (find the names to use with the options above)
 
 exit status: 0 after a normal stop, 1 if the tunnel could not be created or failed, 2 for a usage error."""
@@ -96,35 +86,37 @@ def _callsign(text: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="cqta", description=DESCRIPTION, epilog=EPILOG, add_help=False,
+        prog="cqta", epilog=EPILOG, add_help=False,
         formatter_class=lambda prog: argparse.RawDescriptionHelpFormatter(prog, max_help_position=40, width=100000))
     g = p.add_argument_group("general")
     g.add_argument("-h", "--help", action="help", help="show this help and exit")
     g.add_argument("-V", "--version", action="version", version=f"cqta {__version__}", help="show the version and exit")
     g.add_argument("--tunnel", nargs="?", const=True, default=None, type=_address, metavar="ADDRESS",
-                   help="run without a GUI and keep an operating-system tunnel up (needs administrator rights). ADDRESS is this station's IPv4 address, a.b.c.d[/prefix]: required with --mode kiss and --mode afsk, not allowed with --mode meshtastic (the node decides it); omit everything to reuse the GUI's last connection")
+                   help="run without a GUI and keep an operating-system tunnel up (needs administrator rights). ADDRESS is this station's IPv4 address, a.b.c.d[/prefix]: required with KISS and AFSK, not allowed with Meshtastic (the node decides it); omit everything to reuse the GUI's last connection")
     g.add_argument("--list", choices=("serial", "ble", "audio", "interfaces"), metavar="WHAT",
                    help="print the available serial ports, Bluetooth (ble) Meshtastic nodes, audio devices or network interfaces, and exit")
     g.add_argument("--dump-config", action="store_true",
                    help="print the command line that reproduces the connection currently chosen in the GUI, and exit")
-    g.add_argument("--mode", choices=MODES, help="connection type; selects session-only settings (see below)")
-    g.add_argument("--callsign", type=_callsign, metavar="CALL", help="callsign used for the CQta chat protocol (required with --mode)")
+    g.add_argument("--callsign", type=_callsign, metavar="CALL", help="callsign used for the CQta chat protocol (only with --beacon-interval, which requires it)")
     g.add_argument("--beacon-interval", type=_ranged(15, 3600), metavar="SECONDS",
                    help="send a beacon every SECONDS (15-3600); without this option no beacons are sent")
 
-    m = p.add_argument_group("meshtastic mode (--mode meshtastic; exactly one of these is required)")
+    m = p.add_argument_group("Meshtastic connection (at most one; the value is optional and detected when left out)")
     x = m.add_mutually_exclusive_group()
-    x.add_argument("--meshtastic-serial", metavar="PORT", help="serial port of the node, e.g. /dev/ttyUSB0 or COM3")
-    x.add_argument("--meshtastic-ble", metavar="ADDRESS", help="Bluetooth LE address of the node (a UUID on macOS); see --list ble")
-    x.add_argument("--meshtastic-tcp", metavar="HOST[:PORT]", help="network address of the node (default port 4403)")
+    x.add_argument("--meshtastic-serial", nargs="?", const="", metavar="PORT",
+                   help="serial port of the node, e.g. /dev/ttyUSB0 or COM3. Without a value: a sensible default is chosen")
+    x.add_argument("--meshtastic-ble", nargs="?", const="", metavar="ADDRESS",
+                   help="Bluetooth LE address of the node (a UUID on macOS); see --list ble. Without a value: scan for 6 seconds and use the node with the strongest signal")
+    x.add_argument("--meshtastic-tcp", nargs="?", const="", metavar="HOST[:PORT]",
+                   help="network address of the node. Without a value: 127.0.0.1; the port defaults to 4403")
 
-    k = p.add_argument_group("kiss mode (--mode kiss): KISS TNC over TCP, e.g. Direwolf")
-    k.add_argument("--kiss-host", metavar="HOST", help="TNC host name or address (default 127.0.0.1)")
-    k.add_argument("--kiss-port", type=_ranged(1, 65535), metavar="PORT", help="TNC TCP port (default 8001)")
-    k.add_argument("--kiss-channel", type=_ranged(0, 15), metavar="N", help="KISS channel/port number (0-15, default 0)")
-    k.add_argument("--kiss-mtu", type=_ranged(68, 1500), metavar="BYTES", help="packet size limit (68-1500, default 256)")
+    k = p.add_argument_group("KISS TNC connection over TCP, e.g. Direwolf")
+    k.add_argument("--kiss", nargs="?", const="", metavar="HOST:PORT/KISS-PORT",
+                   help="TNC host, TCP port and KISS channel (0-15). Every part is optional: --kiss alone means 127.0.0.1:8001/0, and --kiss 192.168.1.5, --kiss :9000 and --kiss /2 each change only that part")
+    k.add_argument("--kiss-mtu", type=_ranged(68, 1500), metavar="BYTES", help="packet size limit (68-1500, default 256); also selects the KISS connection")
 
-    a = p.add_argument_group("afsk mode (--mode afsk): 1200 baud AFSK modem through a sound card")
+    a = p.add_argument_group("AFSK modem connection: 1200 baud through a sound card (any of these selects it)")
+    a.add_argument("--afsk", dest="afsk_enable", action="store_const", const=True, help="use the AFSK modem with all its defaults (system audio devices, ...) unless other options below are given")
     a.add_argument("--input-device", dest="afsk_input", metavar="NAME", help="input (receive) audio device name (default: system default); see --list audio")
     a.add_argument("--input-api", dest="afsk_input_api", metavar="API", help="audio API of the input device, when the name is ambiguous")
     a.add_argument("--output-device", dest="afsk_output", metavar="NAME", help="output (transmit) audio device name (default: system default)")
@@ -141,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _given(parser: argparse.ArgumentParser, args: argparse.Namespace, prefix: str) -> list[str]:
     flags = {a.dest: a.option_strings[-1] for a in parser._actions if a.option_strings}
-    return [flags[k] for k, v in vars(args).items() if k.startswith(prefix) and v is not None]
+    return [flags[k] for k, v in vars(args).items() if (k + "_").startswith(prefix) and v is not None]
 
 
 def saved_settings_path() -> Path:
@@ -172,51 +164,120 @@ def describe(s: Settings) -> str:
     return MODE_NAMES.get(s.transport, s.transport)
 
 
+class DetectionError(Exception):
+    pass
+
+
+def parse_tcp_target(text: str) -> tuple[str, int]:
+    from .transports.mesh_links import TCP_PORT
+
+    host, sep, port = text.rpartition(":")
+    if not sep:
+        return text or "127.0.0.1", TCP_PORT
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise argparse.ArgumentTypeError(f"'{port}' is not a valid TCP port")
+    return host or "127.0.0.1", int(port)
+
+
+def parse_kiss_target(text: str, defaults) -> tuple[str, int, int]:
+    """HOST:PORT/KISS-PORT with every part optional."""
+    target, sep, channel = text.partition("/")
+    host, port = defaults.host, defaults.tcp_port
+    if target:
+        h, colon, p = target.rpartition(":")
+        if not colon:
+            h = target
+        elif not p.isdigit() or not 1 <= int(p) <= 65535:
+            raise argparse.ArgumentTypeError(f"'{p}' is not a valid TCP port")
+        else:
+            port = int(p)
+        host = h or host
+    kiss_port = defaults.kiss_port
+    if sep:
+        if not channel.isdigit() or int(channel) > 15:
+            raise argparse.ArgumentTypeError(f"'{channel}' is not a valid KISS port (0-15)")
+        kiss_port = int(channel)
+    return host, port, kiss_port
+
+
+def default_serial_port() -> str:
+    import glob
+    import re
+
+    if sys.platform == "win32":
+        from .transports.mesh_links import list_serial_ports
+
+        ports = [d.address for d in list_serial_ports() if re.fullmatch(r"COM\d+", d.address, re.I)]
+        if ports:
+            return max(ports, key=lambda n: int(n[3:]))
+    else:
+        for pattern in ("/dev/ttyACM*", "/dev/ttyUSB*", "/dev/tty.usb*"):
+            found = sorted(glob.glob(pattern))
+            if found:
+                # the call-out (cu.) twin of a macOS tty. device opens without waiting for a carrier signal
+                twin = found[0].replace("/dev/tty.", "/dev/cu.", 1)
+                return twin if found[0].startswith("/dev/tty.") and os.path.exists(twin) else found[0]
+    raise DetectionError("no serial port found for the Meshtastic node; plug it in or name it with --meshtastic-serial PORT")
+
+
+def default_ble_device() -> str:
+    found = _scan_ble_raw()
+    if not found:
+        raise DetectionError("no Bluetooth Meshtastic node found; check it is on and in range, or give --meshtastic-ble ADDRESS")
+    address, (name, rssi) = max(found.items(), key=lambda kv: kv[1][1])
+    _say(f"Using Bluetooth node {name} ({address}), signal {rssi} dBm")
+    return address
+
+
+def _checked(parser: argparse.ArgumentParser, fn, *args):
+    try:
+        return fn(*args)
+    except argparse.ArgumentTypeError as e:
+        parser.error(str(e))
+
+
 def build_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Settings:
     mode_options = {m: _given(parser, args, m + "_") for m in MODES}
+    chosen = [m for m, opts in mode_options.items() if opts]
     address = args.tunnel if isinstance(args.tunnel, str) else None
-    if args.mode is None:
-        stray = [o for opts in mode_options.values() for o in opts]
-        if stray:
-            parser.error(f"{', '.join(stray)} need --mode to be given")
+    if len(chosen) > 1:
+        parser.error("choose one connection type; these options belong to different ones: "
+                     + "; ".join(f"{m}: {', '.join(mode_options[m])}" for m in chosen))
+    source = "given" if chosen else "saved"
+    if not chosen:
         if address:
-            parser.error("the --tunnel address needs --mode to be given")
+            parser.error("the --tunnel address needs a connection: use --meshtastic-*, --kiss or --afsk options")
+        if args.callsign or args.beacon_interval:
+            parser.error("--callsign and --beacon-interval need a connection: use --meshtastic-*, --kiss or --afsk options "
+                         "(a bare --tunnel reuses the GUI's saved settings unchanged)")
         settings = Settings.load(saved_settings_path())
-        source = "saved"
     else:
-        for m, opts in mode_options.items():
-            if m != args.mode and opts:
-                parser.error(f"{', '.join(opts)} cannot be used with --mode {args.mode}")
-        if not args.callsign:
-            parser.error("--callsign is required with --mode")
-        if args.mode == "meshtastic" and address:
-            parser.error("--mode meshtastic takes its address from the node; do not give one to --tunnel")
-        if args.mode != "meshtastic" and not address:
-            parser.error(f"--mode {args.mode} needs this station's address: --tunnel a.b.c.d[/prefix]")
+        mode = chosen[0]
+        if bool(args.beacon_interval) != bool(args.callsign):
+            parser.error("--callsign and --beacon-interval must be used together")
+        if mode == "meshtastic" and address:
+            parser.error("Meshtastic takes its address from the node; do not give one to --tunnel")
+        if mode != "meshtastic" and not address:
+            parser.error(f"the {MODE_NAMES[mode]} connection needs this station's address: --tunnel a.b.c.d[/prefix]")
         settings = Settings()
-        settings.transport = args.mode
+        settings.transport = mode
         settings.beacon_enabled = False
-        source = "given"
-        if args.mode == "meshtastic":
+        if mode == "meshtastic":
             c = settings.mesh
-            if args.meshtastic_serial:
+            if args.meshtastic_serial is not None:
                 c.kind, c.address = "serial", args.meshtastic_serial
-            elif args.meshtastic_ble:
+            elif args.meshtastic_ble is not None:
                 c.kind, c.address = "ble", args.meshtastic_ble
-            elif args.meshtastic_tcp:
-                host, _, port = args.meshtastic_tcp.rpartition(":")
-                if host and port.isdigit():
-                    c.address, c.port = host, _ranged(1, 65535)(port)
-                else:
-                    c.address = args.meshtastic_tcp
-                c.kind = "tcp"
             else:
-                parser.error("--mode meshtastic needs --meshtastic-serial, --meshtastic-ble or --meshtastic-tcp")
-        elif args.mode == "kiss":
+                c.kind = "tcp"
+                c.address, c.port = _checked(parser, parse_tcp_target, args.meshtastic_tcp)
+            if c.kind == "serial" and not c.address:
+                c.address = default_serial_port()
+            elif c.kind == "ble" and not c.address:
+                c.address = default_ble_device()
+        elif mode == "kiss":
             c = settings.kiss
-            c.host = args.kiss_host or c.host
-            c.tcp_port = args.kiss_port or c.tcp_port
-            c.kiss_port = c.kiss_port if args.kiss_channel is None else args.kiss_channel
+            c.host, c.tcp_port, c.kiss_port = _checked(parser, parse_kiss_target, args.kiss or "", c)
             c.address = address
             c.mtu = args.kiss_mtu or c.mtu
         else:
@@ -240,10 +301,10 @@ def build_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         settings.beacon_enabled = True
 
     if settings.transport == "network":
-        parser.error("the last used connection is the Network interface, which has no tunnel; choose one with --mode")
+        parser.error("the last used connection is the Network interface, which has no tunnel; choose another with --meshtastic-*, --kiss or --afsk options")
     if settings.transport == "meshtastic" and not settings.mesh.address:
         if source == "saved":
-            parser.error("there is no saved Meshtastic device; connect once in the GUI or use --mode meshtastic ...")
+            parser.error("there is no saved Meshtastic device; connect once in the GUI or use --meshtastic-* options")
     # The operating system handles files, ping and everything else over the tunnel
     settings.system_interface = True
     settings.tftp_server = False
@@ -251,14 +312,13 @@ def build_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 
 
 def dump_config_command(s: Settings) -> list[str]:
-    """Arguments that make `--tunnel --mode ...` reproduce `s`; options at their default value are left out."""
+    """Arguments that make `--tunnel ...` reproduce `s`; options at their default value are left out."""
     from .transports.mesh_links import TCP_PORT
 
     d = Settings()
     out = ["--tunnel"]
     if s.transport in ("kiss", "afsk"):
         out.append(getattr(s, s.transport).address)
-    out += ["--mode", s.transport]
     if s.transport == "meshtastic":
         c = s.mesh
         if c.kind == "serial":
@@ -269,11 +329,11 @@ def dump_config_command(s: Settings) -> list[str]:
             out += ["--meshtastic-tcp", c.address if c.port == TCP_PORT else f"{c.address}:{c.port}"]
     elif s.transport == "kiss":
         c, k = s.kiss, d.kiss
-        out += ["--kiss-host", c.host, "--kiss-port", str(c.tcp_port)] if (c.host, c.tcp_port) != (k.host, k.tcp_port) else []
-        out += ["--kiss-channel", str(c.kiss_port)] if c.kiss_port != k.kiss_port else []
+        out += ["--kiss", f"{c.host}:{c.tcp_port}/{c.kiss_port}"]
         out += ["--kiss-mtu", str(c.mtu)] if c.mtu != k.mtu else []
     elif s.transport == "afsk":
         c, a = s.afsk, d.afsk
+        out.append("--afsk")
         for flag, value in (("--input-device", c.input_name), ("--input-api", c.input_api),
                             ("--output-device", c.output_name), ("--output-api", c.output_api)):
             if value:
@@ -288,9 +348,8 @@ def dump_config_command(s: Settings) -> list[str]:
                 out += [flag, f"{value:g}" if isinstance(value, float) else str(value)]
         if not c.csma:
             out.append("--no-csma")
-    out += ["--callsign", s.callsign]
     if s.beacon_enabled:
-        out += ["--beacon-interval", str(s.beacon_interval)]
+        out += ["--callsign", s.callsign, "--beacon-interval", str(s.beacon_interval)]
     return out
 
 
@@ -315,21 +374,73 @@ def print_dump_config() -> int:
     return 0
 
 
+_attached_console = False
+
+
 def attach_console() -> None:
-    """The Windows executable has no console of its own; use the one it was started from, if any."""
+    """The Windows GUI executable has no console of its own and Python leaves sys.stdout/sys.stderr unset.
+
+    Redirected output (`cqta.exe --help > file`) is picked up from the inherited handles; otherwise the console of the
+    terminal that started us is attached, so the text appears there although this remains a GUI program."""
+    global _attached_console
     if sys.platform != "win32" or (sys.stdout is not None and sys.stderr is not None):
         return
     import ctypes
+    import msvcrt
 
-    if not ctypes.windll.kernel32.AttachConsole(-1):
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetStdHandle.restype = ctypes.c_void_p
+    kernel32.GetFileType.argtypes = [ctypes.c_void_p]
+
+    def inherited(std_handle: int):
+        handle = kernel32.GetStdHandle(std_handle)
+        if not handle or handle == ctypes.c_void_p(-1).value or kernel32.GetFileType(handle) == 0:
+            return None
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_TEXT)
+            return open(fd, "w", encoding="utf-8", errors="replace", buffering=1)
+        except OSError:
+            return None
+
+    out = sys.stdout or inherited(-11)
+    err = sys.stderr or inherited(-12)
+    if out is None or err is None:
+        if kernel32.AttachConsole(-1):  # the parent process's console
+            _attached_console = True
+            encoding = f"cp{kernel32.GetConsoleOutputCP()}"
+            try:
+                console = open("CONOUT$", "w", encoding=encoding, errors="replace", buffering=1)
+                out, err = out or console, err or console
+            except OSError:
+                pass
+    sys.stdout, sys.stderr = out, err
+
+
+def release_console() -> None:
+    """A GUI program does not make the shell wait, so its prompt was already drawn before our output; press Enter
+    in the console so the prompt appears again below it."""
+    if not _attached_console:
         return
-    try:
-        if sys.stdout is None:
-            sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
-        if sys.stderr is None:
-            sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
-    except OSError:
-        pass
+    import ctypes
+    from ctypes import wintypes
+
+    class KeyEvent(ctypes.Structure):
+        _fields_ = [("down", wintypes.BOOL), ("repeat", wintypes.WORD), ("vk", wintypes.WORD),
+                    ("scan", wintypes.WORD), ("char", wintypes.WCHAR), ("state", wintypes.DWORD)]
+
+    class InputRecord(ctypes.Structure):
+        _fields_ = [("type", wintypes.WORD), ("key", KeyEvent)]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    handle = kernel32.CreateFileW("CONIN$", 0xC0000000, 3, None, 3, 0, None)  # read+write, share, open existing
+    if not handle or handle == ctypes.c_void_p(-1).value:
+        return
+    records = (InputRecord * 2)(InputRecord(1, KeyEvent(True, 1, 0x0D, 0x1C, "\r", 0)),
+                                InputRecord(1, KeyEvent(False, 1, 0x0D, 0x1C, "\r", 0)))
+    written = wintypes.DWORD()
+    kernel32.WriteConsoleInputW(ctypes.c_void_p(handle), records, 2, ctypes.byref(written))
+    kernel32.CloseHandle(ctypes.c_void_p(handle))
 
 
 def _say(message: str, error: bool = False) -> None:
@@ -371,12 +482,17 @@ def list_things(what: str) -> int:
     return 0
 
 
-def _scan_ble(seconds: float = 6.0) -> list[tuple[str, str]]:
+def _scan_ble_raw(seconds: float = 6.0) -> dict[str, tuple[str, int]]:
     from .transports.mesh_links import BleScanner
 
-    found: dict[str, str] = {}
+    found: dict[str, tuple[str, int]] = {}
     errors: list[str] = []
-    scanner = BleScanner(lambda address, name, rssi: found.__setitem__(address, name), errors.append)
+
+    def seen(address: str, name: str, rssi: int) -> None:
+        if address not in found or rssi > found[address][1]:
+            found[address] = (name, rssi)
+
+    scanner = BleScanner(seen, errors.append)
     print(f"Scanning for Bluetooth Meshtastic nodes for {seconds:.0f} s…", file=sys.stderr)
     scanner.start()
     deadline = time.monotonic() + seconds
@@ -384,8 +500,12 @@ def _scan_ble(seconds: float = 6.0) -> list[tuple[str, str]]:
         time.sleep(0.2)
     scanner.stop()
     if errors and not found:
-        raise RuntimeError(errors[0])
-    return sorted(found.items(), key=lambda kv: kv[1])
+        raise DetectionError(errors[0])
+    return found
+
+
+def _scan_ble() -> list[tuple[str, str]]:
+    return sorted(((a, n) for a, (n, _) in _scan_ble_raw().items()), key=lambda r: r[1])
 
 
 def run_tunnel(settings: Settings) -> int:
@@ -434,7 +554,7 @@ def run_tunnel(settings: Settings) -> int:
         if sig is not None:
             signal.signal(sig, lambda *_: stop.set())
 
-    _say(f"Starting: {describe(settings)} as {settings.callsign}")
+    _say(f"Starting: {describe(settings)}")
     ctrl.start()
     ctrl.post(ctrl.connect)
     while not stop.wait(0.5):  # a timeout keeps Ctrl+C responsive on Windows
@@ -450,12 +570,36 @@ def run_tunnel(settings: Settings) -> int:
 
 def main(argv: list[str]) -> int:
     attach_console()
+    try:
+        return _main(argv)
+    finally:
+        for stream in (sys.stdout, sys.stderr):
+            if stream is not None:
+                try:
+                    stream.flush()
+                except (OSError, ValueError):
+                    pass
+        release_console()
+
+
+def _main(argv: list[str]) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.dump_config or args.list:
+        others = [a for a in argv if a.startswith("--") and a.split("=")[0] not in ("--list", "--dump-config")]
+        if others or (args.dump_config and args.list):
+            action = "--dump-config" if args.dump_config else "--list"
+            parser.error(f"{action} is used on its own and cannot be combined with other options"
+                         + (f" (found {', '.join(others)})" if others else ""))
     if args.dump_config:
         return print_dump_config()
     if args.list:
         return list_things(args.list)
     if not args.tunnel:
         parser.error("nothing to do: use --tunnel to run without the GUI, --list WHAT, --dump-config, or no arguments for the GUI")
-    return run_tunnel(build_settings(args, parser))
+    try:
+        settings = build_settings(args, parser)
+    except (DetectionError, argparse.ArgumentTypeError) as e:
+        print(f"cqta: {e}", file=sys.stderr)
+        return 1
+    return run_tunnel(settings)

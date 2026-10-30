@@ -134,7 +134,8 @@ class KissTransport(Transport):
                 s.settimeout(None)
                 s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             except OSError as e:
-                self.dispatcher.post(lambda: self._fail(gen, f"Cannot connect to {c.host}:{c.tcp_port}: {e}"))
+                reason = f"Cannot connect to {c.host}:{c.tcp_port}: {e}"
+                self.dispatcher.post(lambda: self._fail(gen, reason))
                 return
             self.dispatcher.post(lambda: self._connected(gen, s))
             decoder = KissDecoder()
