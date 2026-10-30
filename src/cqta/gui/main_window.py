@@ -30,6 +30,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("CQta")
         self._mode = self.ctrl.settings
         self._call = self.ctrl.settings.callsign
+        self._disconnected = True
         self.resize(1000, 760)
         if icon:
             self.setWindowIcon(icon)
@@ -181,7 +182,8 @@ class MainWindow(QMainWindow):
 
     def _title(self, callsign: str) -> str:
         self._call = callsign
-        return f"CQta - {callsign} ({self._transport_label(self._mode)})"
+        state = "Disconnected" if self._disconnected else self._transport_label(self._mode)
+        return f"CQta - {callsign} ({state})"
 
     @staticmethod
     def _transport_label(s) -> str:
@@ -311,6 +313,8 @@ class MainWindow(QMainWindow):
 
     def _link(self, state: LinkState, detail: str) -> None:
         text = CoreBridgeText.state(state)
+        self._disconnected = state is LinkState.STOPPED
+        self.setWindowTitle(self._title(self._call))
         self.link_label.setText(f"{text}: {detail}" if detail and state is not LinkState.READY else text)
         self.connect_action.setEnabled(state is LinkState.STOPPED)  # disconnect first to change the connection
         self.disconnect_action.setEnabled(state is not LinkState.STOPPED)

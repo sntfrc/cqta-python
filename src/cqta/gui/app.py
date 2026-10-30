@@ -5,7 +5,7 @@ import signal
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, qInstallMessageHandler
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -54,10 +54,20 @@ def register_windows_identity() -> None:
         pass
 
 
+def _quiet_qt_noise() -> None:
+    """Qt's X11 backend prints 'Trying to disable X but Y is focused' while menus open and close; it is harmless."""
+    def handler(mode, context, message):
+        if "is focused" not in message:
+            print(message, file=sys.stderr)
+
+    qInstallMessageHandler(handler)
+
+
 def run(argv: list[str]) -> int:
     # Same Qt-drawn menu bar on every platform, so check marks render consistently
     if sys.platform == "darwin":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, True)
+    _quiet_qt_noise()
     app = QApplication(argv[:1])
     if sys.platform == "win32":
         import ctypes
