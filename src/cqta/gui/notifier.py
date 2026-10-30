@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QSystemTrayIcon
 
@@ -54,6 +54,8 @@ class Notifier(QObject):
     # Windows / Linux
 
     def _tray_message(self, kind: str, title: str, body: str, target: object) -> None:
+        if sys.platform.startswith("linux") and self._dbus_notify(kind, title, body, target):
+            return
         if not QSystemTrayIcon.isSystemTrayAvailable() and sys.platform != "linux":
             return
         if self._tray is None:
@@ -63,6 +65,38 @@ class Notifier(QObject):
         self._tray.showMessage(title, body, self._icon, TRAY_LIFETIME_MS)
         if sys.platform != "darwin":
             self._hide_timer.start(TRAY_LIFETIME_MS + 1000)
+
+    def _dbus_notify(self, kind: str, title: str, body: str, target: object) -> bool:
+        """Sends the notification straight to the desktop's notification service, which (unlike the tray message
+        path) makes GNOME show a pop-up banner instead of only filing it in the notification panel."""
+        try:
+            from PySide6.QtDBus import QDBusConnection, QDBusMessage
+        except ImportError:
+            return False
+        bus = QDBusConnection.sessionBus()
+        if not bus.isConnected():
+            return False
+        if not getattr(self, "_dbus_hooked", False):
+            self._dbus_hooked = True
+            self._dbus_targets: dict[int, tuple[str, object]] = {}
+            bus.connect("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                        "org.freedesktop.Notifications", "ActionInvoked", self, self._dbus_action)
+        msg = QDBusMessage.createMethodCall("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                                            "org.freedesktop.Notifications", "Notify")
+        hints = {"desktop-entry": "cqta", "category": "im.received"}
+        msg.setArguments(["CQta", 0, "cqta", title, body, ["default", "Open"], hints, 10_000])
+        reply = bus.call(msg)
+        if reply.type() != QDBusMessage.MessageType.ReplyMessage or not reply.arguments():
+            return False
+        self._dbus_targets[int(reply.arguments()[0])] = (kind, target)
+        if len(self._dbus_targets) > 50:
+            self._dbus_targets.pop(next(iter(self._dbus_targets)))
+        return True
+
+    @Slot("uint", str)
+    def _dbus_action(self, nid: int, _action: str) -> None:
+        if nid in self._dbus_targets:
+            self.clicked.emit(*self._dbus_targets[nid])
 
     # macOS
 

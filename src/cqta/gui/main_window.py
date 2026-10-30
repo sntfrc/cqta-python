@@ -28,6 +28,8 @@ class MainWindow(QMainWindow):
         self.bridge = bridge
         self.ctrl = bridge.ctrl
         self.setWindowTitle("CQta")
+        self._mode = self.ctrl.settings
+        self._call = self.ctrl.settings.callsign
         self.resize(1000, 760)
         if icon:
             self.setWindowIcon(icon)
@@ -81,6 +83,7 @@ class MainWindow(QMainWindow):
         self.disconnect_action.setEnabled(False)
         m.addSeparator()
         self.tun_action = self._check(m, "System network interface (needs admin)", s.system_interface, self._tun_toggled)
+        self.tun_action.setVisible(s.transport != "network")
         self.duty_action = m.addAction("Override duty cycle")
         self.duty_action.setCheckable(True)
         self.duty_action.setVisible(False)
@@ -176,9 +179,24 @@ class MainWindow(QMainWindow):
             self.qsos[info.peer].view.set_lines(lines.get(info.peer, []))
         self.setWindowTitle(self._title(self.ctrl.settings.callsign))
 
+    def _title(self, callsign: str) -> str:
+        self._call = callsign
+        return f"CQta - {callsign} ({self._transport_label(self._mode)})"
+
     @staticmethod
-    def _title(callsign: str) -> str:
-        return f"CQta - {callsign}"
+    def _transport_label(s) -> str:
+        if s.transport == "meshtastic":
+            return f"Meshtastic - {s.mesh.address}" if s.mesh.address else "Meshtastic"
+        if s.transport == "kiss":
+            return f"KISS TNC - {s.kiss.host}:{s.kiss.tcp_port}"
+        if s.transport == "network":
+            return f"Network interface - {s.network.interface}" if s.network.interface else "Network interface"
+        return "AFSK modem"
+
+    def _refresh_mode(self, settings) -> None:
+        self._mode = settings
+        self.tun_action.setVisible(settings.transport != "network")
+        self.setWindowTitle(self._title(self._call))
 
     # Helpers
 
@@ -365,6 +383,7 @@ class MainWindow(QMainWindow):
         dlg = ConnectionDialog(self.ctrl.settings, self)
         if dlg.exec():
             s = dlg.settings
+            self._refresh_mode(s)
             self.bridge.post(lambda: self._apply_and_connect(s))
 
     def _apply_and_connect(self, s) -> None:
