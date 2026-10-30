@@ -11,7 +11,9 @@ macOS: runs in a venv made from python.org's Python 3.13 (CQTA_MACOS_PYTHON over
   built for macOS 12 or older, and fails if any bundled binary needs something newer.
   Signing picks the first available of: CQTA_CODESIGN_IDENTITY, a Developer ID Application certificate, any other
   valid certificate (Apple Development / personal team), a self-signed certificate, then ad-hoc.
-  CQTA_NOTARY_PROFILE=<notarytool keychain profile> notarizes and staples (Developer ID only).
+  With a Developer ID certificate the app and dmg are notarized and stapled so Gatekeeper accepts them, using
+  APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD, or the notarytool keychain profile CQTA_NOTARY_PROFILE (default
+  "cqta-notary"). Without either, the build continues unnotarized.
 Requires: pip install -e .[build]
 """
 
@@ -36,6 +38,7 @@ from cqta import APP_ID, __version__  # noqa: E402
 
 MACOS_MIN = (12, 0)  # newest PySide6 wheels that still run on this release are 6.9
 MANYLINUX_IMAGE = "quay.io/pypa/manylinux_2_28_{arch}"
+DEFAULT_NOTARY_PROFILE = "cqta-notary"
 MACOS_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13"
 
 
@@ -114,6 +117,28 @@ def check_macos_floor(app: Path) -> None:
             print(f"  requires macOS {'.'.join(map(str, value))}: {path}")
         sys.exit(f"{len(too_new)} binaries need macOS newer than {'.'.join(map(str, MACOS_MIN))}")
     print(f"All bundled binaries run on macOS {'.'.join(map(str, MACOS_MIN))} or later")
+
+
+def notary_credentials() -> list[str] | None:
+    """notarytool credential arguments, or None when notarization cannot be done."""
+    env = os.environ
+    if env.get("APPLE_ID") and env.get("APPLE_TEAM_ID") and env.get("APPLE_APP_PASSWORD"):
+        return ["--apple-id", env["APPLE_ID"], "--team-id", env["APPLE_TEAM_ID"], "--password", env["APPLE_APP_PASSWORD"]]
+    profile = env.get("CQTA_NOTARY_PROFILE", DEFAULT_NOTARY_PROFILE)
+    probe = subprocess.run(["xcrun", "notarytool", "history", "--keychain-profile", profile],
+                           capture_output=True, text=True)
+    return ["--keychain-profile", profile] if probe.returncode == 0 else None
+
+
+def notarize(path: Path, credentials: list[str]) -> None:
+    """Submits a .app (zipped) or .dmg to Apple and waits; fails the build if it is rejected."""
+    submit = path
+    if path.suffix == ".app":
+        submit = BUILD / "notarize.zip"
+        submit.unlink(missing_ok=True)
+        run(["ditto", "-c", "-k", "--keepParent", path, submit])
+    run(["xcrun", "notarytool", "submit", submit, *credentials, "--wait"])
+    run(["xcrun", "stapler", "staple", path])
 
 
 def signing_identity() -> tuple[str, bool]:
@@ -275,6 +300,13 @@ def build_macos(icons: Path) -> Path:
             "--options", "runtime", "--entitlements", entitlements, "--sign", identity]
     run([*sign, app])
     run(["codesign", "--verify", "--deep", "--strict", app])
+    credentials = notary_credentials() if developer_id else None
+    if credentials:
+        notarize(app, credentials)
+    else:
+        why = "no Developer ID Application certificate" if not developer_id else \
+            f"no notarytool credentials (store a keychain profile named {DEFAULT_NOTARY_PROFILE} or set CQTA_NOTARY_PROFILE)"
+        print(f"warning: not notarizing ({why}); Gatekeeper will block the app on other Macs")
     stage = BUILD / "dmg"
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)
@@ -284,11 +316,10 @@ def build_macos(icons: Path) -> Path:
     out.unlink(missing_ok=True)
     run(["hdiutil", "create", "-volname", f"CQta {__version__}", "-srcfolder", stage, "-ov", "-format", "UDZO", out])
     if identity != "-":
-        run(["codesign", "--force", "--sign", identity, out])
-    profile = os.environ.get("CQTA_NOTARY_PROFILE")
-    if profile and developer_id:
-        run(["xcrun", "notarytool", "submit", out, "--keychain-profile", profile, "--wait"])
-        run(["xcrun", "stapler", "staple", out])
+        run(["codesign", "--force", "--timestamp" if developer_id else "--timestamp=none", "--sign", identity, out])
+    if credentials:
+        notarize(out, credentials)
+        run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature", "-v", out])
     return out
 
 

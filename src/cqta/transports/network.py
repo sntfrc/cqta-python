@@ -83,7 +83,7 @@ class NetworkTransport(Transport):
         super().__init__(dispatcher)
         self.config = config
         self._address: Optional[Address] = None
-        self._socks: dict[int, socket.socket] = {}
+        self._socks: dict[int, list[socket.socket]] = {}  # per port; the first one is used for sending
         self._running = False
         self._lock = threading.Lock()
 
@@ -113,7 +113,7 @@ class NetworkTransport(Transport):
     def stop(self) -> None:
         self._running = False
         with self._lock:
-            socks, self._socks = list(self._socks.values()), {}
+            socks, self._socks = [s for group in self._socks.values() for s in group], {}
         for s in socks:
             try:
                 s.close()
@@ -137,27 +137,46 @@ class NetworkTransport(Transport):
         except OSError as e:
             self.log(f"Network: send failed: {e}")
 
+    def _bind_addresses(self) -> list[str]:
+        """Where to listen. Some systems (macOS, BSDs) do not hand broadcasts to a socket bound to 0.0.0.0 when
+        other sockets share the port, so there we bind the interface's broadcast address and its own address
+        (for directed traffic); Windows cannot bind a broadcast address, so it listens on all addresses."""
+        a = self._address
+        if sys.platform == "win32" or a is None:
+            return [""]
+        return [bytes_to_ip(a.host), bytes_to_ip(a.broadcast)]
+
     def _open_port(self, port: int, required: bool = False) -> Optional[socket.socket]:
         with self._lock:
-            sock = self._socks.get(port)
-            if sock is not None:
-                return sock
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            group = self._socks.get(port)
+            if group:
+                return group[0]
+            opened: list[socket.socket] = []
             try:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                if hasattr(socket, "SO_REUSEPORT") and sys.platform != "win32":
-                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # several instances on one machine
-                s.bind(("", port))
+                for address in self._bind_addresses():
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    opened.append(s)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    if hasattr(socket, "SO_REUSEPORT") and sys.platform != "win32":
+                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # several instances on one machine
+                    try:
+                        s.bind((address, port))
+                    except OSError:
+                        if len(opened) == 1:
+                            raise
+                        s.bind(("", port))  # broadcast address not bindable here (e.g. loopback)
             except OSError as e:
-                s.close()
+                for s in opened:
+                    s.close()
                 if required:
                     raise
                 self.log(f"Network: cannot use UDP port {port}: {e}")
                 return None
-            self._socks[port] = s
-        threading.Thread(target=self._reader, args=(port, s), name=f"cqta-net-{port}", daemon=True).start()
-        return s
+            self._socks[port] = opened
+        for s in opened:
+            threading.Thread(target=self._reader, args=(port, s), name=f"cqta-net-{port}", daemon=True).start()
+        return opened[0]
 
     def _reader(self, port: int, sock: socket.socket) -> None:
         while True:

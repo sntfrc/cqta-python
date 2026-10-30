@@ -37,7 +37,32 @@ def open_path(path: str | Path, create: bool = False) -> None:
             return
         except OSError:
             pass
+    if sys.platform.startswith("linux") and open_with_xdg(target):
+        return
     QDesktopServices.openUrl(QUrl.fromLocalFile(target))
+
+
+def open_with_xdg(target: str) -> bool:
+    """Qt's own launcher does nothing inside an AppImage, so run xdg-open with the environment PyInstaller changed
+    (library paths pointing at the bundle) restored; those paths would break the file manager it starts."""
+    import shutil
+
+    env = dict(os.environ)
+    for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
+        original = env.pop(f"{var}_ORIG", None)
+        if original is not None:
+            env[var] = original
+        else:
+            env.pop(var, None)
+    for tool in (["xdg-open"], ["gio", "open"]):
+        if shutil.which(tool[0]):
+            try:
+                subprocess.Popen([*tool, target], env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                return True
+            except OSError:
+                continue
+    return False
 
 
 def reveal(path: str) -> None:

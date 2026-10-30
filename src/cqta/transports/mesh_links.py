@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -95,14 +96,15 @@ class SerialLink(MeshLink):
         import serial
 
         try:
-            # Keep DTR/RTS low: on many ESP32 boards toggling them resets the node.
+            # DTR and RTS stay asserted together, as the Meshtastic tools do: USB-CDC nodes (nRF52, ESP32-S3) only talk
+            # while DTR is high, and with both lines high the auto-reset circuit of ESP32 boards does not trigger.
             s = serial.Serial()
             s.port = self.port
             s.baudrate = self.baud
             s.timeout = 0.2
             s.write_timeout = 5
-            s.dtr = False
-            s.rts = False
+            s.dtr = True
+            s.rts = True
             s.open()
         except (serial.SerialException, OSError, ValueError) as e:
             raise LinkError(f"Cannot open {self.port}: {e}") from e
@@ -110,6 +112,8 @@ class SerialLink(MeshLink):
         try:
             s.write(bytes([START2]) * 32)  # wake a node that is in light sleep
             s.flush()
+            time.sleep(0.2)  # give a node that just woke (or restarted because the port opened) time to listen
+            s.reset_input_buffer()
         except (serial.SerialException, OSError) as e:
             s.close()
             raise LinkError(str(e)) from e
@@ -293,8 +297,11 @@ class MeshDevice:
 def list_serial_ports() -> list[MeshDevice]:
     from serial.tools import list_ports
 
+    ports = sorted(list_ports.comports(), key=lambda p: p.device)
+    # macOS lists every port twice; opening the /dev/tty.* one blocks waiting for a carrier signal
+    ports = [p for p in ports if not p.device.startswith("/dev/tty.")]
     return [MeshDevice("serial", p.device, p.description if p.description and p.description != "n/a" else p.device)
-            for p in sorted(list_ports.comports(), key=lambda p: p.device)]
+            for p in ports]
 
 
 class BleScanner:
