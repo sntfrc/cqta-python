@@ -15,8 +15,8 @@ class CoreBridge(QObject):
     info = Signal(object)  # TransportInfo | None
     log = Signal(str)
     ping = Signal(object)
-    nodes = Signal(object)
-    duty = Signal(bool, bool)
+    nodes = Signal(str, object)  # transport kind, rows
+    duty = Signal(bool, bool, bool)  # limited, override, pending
     duty_failed = Signal(str)
     tun = Signal(str, str)
     stats = Signal(object)
@@ -54,7 +54,7 @@ class CoreBridge(QObject):
         c.on_conversation = self.conversation.emit
         c.on_conversation_reset = self.conversation_reset.emit
         c.on_conversation_removed = self.conversation_removed.emit
-        c.on_stations = self.stations.emit
+        c.on_stations = self._stations_changed
         c.on_status = self.status.emit
         c.on_notice = self.notice.emit
         c.on_notification = self.notification.emit
@@ -66,6 +66,10 @@ class CoreBridge(QObject):
         f.on_status = self.status.emit
         f.on_file_received = self.file_received.emit
         f.on_incoming_started = self.incoming_started.emit
+
+    def _stations_changed(self, stations) -> None:
+        self.stations.emit(stations)
+        self.ctrl.publish_nodes()  # heard stations double as the node list on non-Meshtastic links
 
     def post(self, fn: Callable[[], None]) -> None:
         self.ctrl.post(fn)

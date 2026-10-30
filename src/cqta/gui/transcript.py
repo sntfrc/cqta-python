@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import html
-import time
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QTextBrowser
 
 from ..app.chat import Line
+from . import timefmt
 
 COLORS = {"me": "#4a90d9", "peer": "#2fa84f", "system": "#8a8a8a"}
 MAX_LINES = 1000
@@ -34,7 +34,7 @@ class TranscriptView(QTextBrowser):
         bar = self.verticalScrollBar()
         at_end = bar.value() >= bar.maximum() - 4
         color = COLORS.get(line.kind, "#888")
-        stamp = time.strftime("%H:%M:%S", time.localtime(line.time))
+        stamp = timefmt.hms(line.time)
         label = html.escape(line.label)
         text = html.escape(line.text)
         if line.kind == "system":

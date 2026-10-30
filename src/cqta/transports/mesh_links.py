@@ -297,17 +297,46 @@ def list_serial_ports() -> list[MeshDevice]:
             for p in sorted(list_ports.comports(), key=lambda p: p.device)]
 
 
-def scan_ble(timeout: float = 6.0) -> list[MeshDevice]:
-    """Blocking scan for devices advertising the Meshtastic service."""
-    from bleak import BleakScanner
+class BleScanner:
+    """Continuous scan for devices advertising the Meshtastic service (like the iOS app's live list).
 
-    async def run():
-        return await BleakScanner.discover(timeout=timeout, return_adv=True,
-                                           service_uuids=[mw.SERVICE_UUID])
+    `on_device(address, name, rssi)` fires on the scanner thread for every advertisement; `on_error(message)` if the
+    scan cannot run (no adapter, Bluetooth off, permission denied).
+    """
 
-    found = asyncio.run(run())
-    devices = []
-    for address, (device, adv) in found.items():
-        if mw.SERVICE_UUID in [u.lower() for u in (adv.service_uuids or [])]:
-            devices.append(MeshDevice("ble", address, device.name or adv.local_name or address))
-    return sorted(devices, key=lambda d: d.name.lower())
+    def __init__(self, on_device: Callable[[str, str, int], None], on_error: Callable[[str], None]) -> None:
+        self.on_device = on_device
+        self.on_error = on_error
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._stop: Optional[asyncio.Event] = None
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=lambda: asyncio.run(self._run()), name="ble-scan", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        loop, stop = self._loop, self._stop
+        self._thread = None
+        if loop is not None and stop is not None:
+            loop.call_soon_threadsafe(stop.set)
+
+    async def _run(self) -> None:
+        from bleak import BleakScanner
+
+        self._loop, self._stop = asyncio.get_running_loop(), asyncio.Event()
+        stop = self._stop
+
+        def seen(device, adv) -> None:
+            if stop.is_set():
+                return
+            self.on_device(device.address, adv.local_name or device.name or "Meshtastic", int(adv.rssi))
+
+        try:
+            async with BleakScanner(seen, service_uuids=[mw.SERVICE_UUID]):
+                await stop.wait()
+        except Exception as e:
+            if not stop.is_set():
+                self.on_error(f"Bluetooth scan failed: {e}")

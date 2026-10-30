@@ -4,15 +4,17 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon
-from PySide6.QtWidgets import (QApplication, QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressBar, QSplitter,
-                               QSystemTrayIcon, QTabWidget, QWidget)
+from PySide6.QtWidgets import (QApplication, QInputDialog, QLabel, QMainWindow, QProgressBar, QSplitter,
+                               QTabWidget, QWidget)
 
 from ..app.chat import ConvInfo
 from ..core.protocol import DEFAULT_CALLSIGN
 from ..transports.base import LinkState
+from . import dialogs
 from .bridge import CoreBridge
 from .connection_dialog import ConnectionDialog
 from .files_window import FilesWindow
+from .notifier import Notifier
 from .nodes_window import LogWindow, NodesWindow
 from .panels import BroadcastPanel, QsoTab, StationsPanel
 
@@ -61,9 +63,8 @@ class MainWindow(QMainWindow):
         self.files_window = FilesWindow(bridge)
         self.nodes_window = NodesWindow(bridge)
         self.log_window = LogWindow(bridge)
-        self.tray = QSystemTrayIcon(icon or QIcon(), self) if QSystemTrayIcon.isSystemTrayAvailable() else None
-        if self.tray:
-            self.tray.show()
+        self.notifier = Notifier(icon or QIcon(), self)
+        self.notifier.clicked.connect(self._notification_clicked)
 
         self._build_menus()
         self._build_status()
@@ -80,7 +81,11 @@ class MainWindow(QMainWindow):
         self.disconnect_action.setEnabled(False)
         m.addSeparator()
         self.tun_action = self._check(m, "System network interface (needs admin)", s.system_interface, self._tun_toggled)
-        self.duty_action = self._check(m, "Meshtastic duty-cycle override", s.duty_cycle_override, self._duty_toggled)
+        self.duty_action = m.addAction("Override duty cycle")
+        self.duty_action.setCheckable(True)
+        self.duty_action.setVisible(False)
+        self.duty_action.triggered.connect(self._duty_toggled)
+        self._duty_override = False
         m.addSeparator()
         m.addAction("Quit", self.close).setMenuRole(QAction.QuitRole)
 
@@ -145,7 +150,7 @@ class MainWindow(QMainWindow):
         b.status.connect(self.message.setText)
         b.notice.connect(self.message.setText)
         b.duty.connect(self._duty)
-        b.duty_failed.connect(lambda m: QMessageBox.warning(self, "Duty cycle", m))
+        b.duty_failed.connect(lambda m: dialogs.warning(self, "Duty cycle", m))
         b.conversation.connect(self._conversation)
         b.conversation_removed.connect(self._removed)
         b.conversation_reset.connect(self._reset)
@@ -188,7 +193,7 @@ class MainWindow(QMainWindow):
         opened = self.bridge.query(lambda: chat.open_qso(peer))
         if not opened:
             self.focus_peer = None
-            QMessageBox.warning(self, "Open QSO", f"'{peer}' is not a valid callsign to talk to.")
+            dialogs.warning(self, "Open QSO", f"'{peer}' is not a valid callsign to talk to.")
             return
         peer = opened
         self.focus_peer = peer
@@ -266,7 +271,7 @@ class MainWindow(QMainWindow):
             peer = tab.peer
             info = self.infos.get(peer)
             if info is not None and not info.closed:
-                if QMessageBox.question(self, "Close QSO", f"Send QRT to {peer} and close this QSO?") != QMessageBox.Yes:
+                if not dialogs.question(self, "Close QSO", f"Send QRT to {peer} and close this QSO?"):
                     return
             self.bridge.post(lambda: self.ctrl.chat.close_qso(peer))
             if info is not None and info.closed:
@@ -291,6 +296,8 @@ class MainWindow(QMainWindow):
         self.link_label.setText(f"{text}: {detail}" if detail and state is not LinkState.READY else text)
         self.connect_action.setEnabled(True)
         self.disconnect_action.setEnabled(state is not LinkState.STOPPED)
+        if state is not LinkState.READY:
+            self.duty_action.setVisible(False)
         if state is LinkState.STOPPED:
             self.ip_label.setText("")
             self.level.hide()
@@ -315,17 +322,19 @@ class MainWindow(QMainWindow):
         self.tun_action.setChecked(state in ("starting", "on"))
         self.tun_action.blockSignals(False)
         if state == "error":
-            QMessageBox.warning(self, "System network interface", detail)
+            dialogs.warning(self, "System network interface", detail)
 
     def _beacon(self, countdown: int, tx: bool) -> None:
         self.beacon_label.setText("Beacon: sending" if tx else f"Beacon in {countdown}s" if countdown > 0 else "")
 
-    def _duty(self, limited: bool, override: bool) -> None:
-        self.duty_action.blockSignals(True)
-        self.duty_action.setChecked(override)
-        self.duty_action.blockSignals(False)
-        if limited:
-            self.message.setText("Meshtastic duty cycle limit active")
+    def _duty(self, limited: bool, override: bool, pending: bool) -> None:
+        """Mirror the node's real state: only offered while connected to a duty-cycle limited Meshtastic node."""
+        self._duty_override = override
+        a = self.duty_action
+        a.setVisible(limited)
+        a.setEnabled(not pending)
+        a.setChecked(override)
+        a.setText("Override duty cycle (waiting for node…)" if pending else "Override duty cycle")
 
     def _callsign(self, call: str) -> None:
         self.setWindowTitle(self._title(call))
@@ -333,10 +342,20 @@ class MainWindow(QMainWindow):
     # Notifications
 
     def _notification(self, kind: str, title: str, body: str, peer) -> None:
-        if self.tray:
-            self.tray.showMessage(title, body, QSystemTrayIcon.Information, 5000)
+        self.notifier.show(kind, title, body, peer)
         if self.ctrl.settings.sound:
             QApplication.beep()
+
+    def _notification_clicked(self, kind: str, target) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if kind == "direct" and target:
+            self.open_qso(str(target))
+        elif kind in ("file", "file_start"):
+            self._show(self.files_window)
+            if target:
+                self.files_window.reveal_file(str(target))
 
     # Actions
 
@@ -350,8 +369,8 @@ class MainWindow(QMainWindow):
         # Settings objects are replaced wholesale; keep live chat values rather than the dialog copy's
         s.callsign, s.monitor, s.notify = self.ctrl.chat.callsign, self.ctrl.chat.monitor, dict(self.ctrl.chat.notify)
         s.beacon_enabled, s.beacon_interval = self.ctrl.chat.beacon_enabled, self.ctrl.chat.beacon_interval
-        s.sound, s.tftp_server, s.download_dir = self.ctrl.settings.sound, self.ctrl.settings.tftp_server, \
-            self.ctrl.settings.download_dir
+        s.sound, s.tftp_server, s.download_dir, s.file_target = (self.ctrl.settings.sound, self.ctrl.settings.tftp_server,
+                                                                self.ctrl.settings.download_dir, self.ctrl.settings.file_target)
         self.ctrl.settings = s
         s.save()
         self.ctrl.connect()
@@ -361,8 +380,9 @@ class MainWindow(QMainWindow):
         self.bridge.post(lambda: (self.ctrl.set_system_interface(on), self.ctrl.sync_settings()))
 
     def _duty_toggled(self, on: bool) -> None:
-        self.ctrl.settings.duty_cycle_override = on
-        self.bridge.post(lambda: (self.ctrl.set_duty_cycle_override(on), self.ctrl.sync_settings()))
+        # Qt flips the check immediately; put it back until the node confirms the change
+        self.duty_action.setChecked(self._duty_override)
+        self.bridge.post(lambda: self.ctrl.set_duty_cycle_override(on))
 
     def _monitor_toggled(self, on: bool) -> None:
         def apply() -> None:
@@ -393,7 +413,7 @@ class MainWindow(QMainWindow):
             error = self.bridge.query(lambda: self._set_callsign(text))
             if not error:
                 return
-            QMessageBox.warning(self, "Callsign", error)
+            dialogs.warning(self, "Callsign", error)
             current = text
 
     def _set_callsign(self, text: str) -> Optional[str]:
@@ -415,13 +435,13 @@ class MainWindow(QMainWindow):
             self.bridge.post(apply)
 
     def _clear_qsos(self) -> None:
-        if QMessageBox.question(self, "Clear QSOs", "Forget all conversations?") == QMessageBox.Yes:
+        if dialogs.question(self, "Clear QSOs", "Forget all conversations?"):
             self.bridge.post(self.ctrl.chat.clear_qsos)
 
     def about(self) -> None:
         from .. import __version__
 
-        QMessageBox.about(self, "About CQta",
+        dialogs.about(self, "About CQta",
                           f"<b>CQta {__version__}</b><br>Chat and file transfer over Meshtastic, KISS TNCs and "
                           "AFSK sound modems, using IP tunnelling through pytap3.")
 

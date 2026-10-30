@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import copy
-import threading
 from typing import Optional
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+                               QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
+                               QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..app.settings import Settings
 from ..core.ipv4 import parse_address, random_ip
 from ..transports import audio
-from ..transports.mesh_links import MeshDevice, list_serial_ports, scan_ble
+from ..transports.network import list_interfaces
+from ..transports.mesh_links import BleScanner, list_serial_ports
+from . import dialogs
 
-TRANSPORTS = [("meshtastic", "Meshtastic"), ("afsk", "AFSK sound modem"), ("kiss", "KISS TCP TNC")]
+TRANSPORTS = [("meshtastic", "Meshtastic"), ("afsk", "AFSK sound modem"), ("kiss", "KISS TCP TNC"),
+              ("network", "Network interface")]
 MESH_KINDS = [("serial", "USB serial"), ("ble", "Bluetooth LE"), ("tcp", "TCP / Wi-Fi")]
 
 
@@ -24,11 +26,17 @@ def _spin(lo: int, hi: int, value: int, suffix: str = "") -> QSpinBox:
     s.setValue(value)
     if suffix:
         s.setSuffix(suffix)
+    s.setFixedWidth(120)
+    s.setAlignment(Qt.AlignRight)
     return s
 
 
 class MeshPage(QWidget):
-    scanned = Signal(object, str)
+    """Meshtastic: serial port, live Bluetooth LE list (like the iOS app) or TCP host."""
+
+    seen = Signal(str, str, int)
+    scan_error = Signal(str)
+    changed = Signal()
 
     def __init__(self, settings: Settings) -> None:
         super().__init__()
@@ -37,21 +45,22 @@ class MeshPage(QWidget):
         for k, label in MESH_KINDS:
             self.kind.addItem(label, k)
         self.kind.setCurrentIndex(max(self.kind.findData(c.kind), 0))
-        self.device = QComboBox()
-        self.device.setEditable(True)
-        self.scan = QPushButton("Scan")
+
+        self.serial = QComboBox()
+        self.serial.setEditable(True)
+        self._serial_saved = c.address if c.kind == "serial" else ""
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(self.refresh_serial)
+        serial_row = QHBoxLayout()
+        serial_row.setContentsMargins(0, 0, 0, 0)
+        serial_row.addWidget(self.serial, 1)
+        serial_row.addWidget(refresh)
+        self.serial_widget = QWidget()
+        self.serial_widget.setLayout(serial_row)
+
         self.host = QLineEdit(c.address if c.kind == "tcp" else "")
         self.host.setPlaceholderText("meshtastic.local or 192.168.1.20")
         self.port = _spin(1, 65535, c.port)
-        self._saved = {"serial": c.address if c.kind == "serial" else "", "ble": c.address if c.kind == "ble" else ""}
-        self._devices: list[MeshDevice] = []
-
-        dev_row = QHBoxLayout()
-        dev_row.addWidget(self.device, 1)
-        dev_row.addWidget(self.scan)
-        self.dev_widget = QWidget()
-        self.dev_widget.setLayout(dev_row)
-        dev_row.setContentsMargins(0, 0, 0, 0)
         tcp_row = QHBoxLayout()
         tcp_row.setContentsMargins(0, 0, 0, 0)
         tcp_row.addWidget(self.host, 1)
@@ -60,81 +69,157 @@ class MeshPage(QWidget):
         self.tcp_widget = QWidget()
         self.tcp_widget.setLayout(tcp_row)
 
+        # BLE: devices in discovery order, RSSI updated in place, check mark on the selected radio
+        self.ble_selected: tuple[str, str] = (c.address, c.name) if c.kind == "ble" and c.address else ("", "")
+        self.radios = QTableWidget(0, 3)
+        self.radios.horizontalHeader().hide()
+        self.radios.verticalHeader().hide()
+        self.radios.setShowGrid(False)
+        self.radios.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.radios.setSelectionMode(QAbstractItemView.NoSelection)
+        self.radios.setMinimumHeight(140)
+        h = self.radios.horizontalHeader()
+        h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(1, QHeaderView.Stretch)
+        h.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.radios.cellClicked.connect(self._pick)
+        self.ble_status = QLabel()
+        self.ble_status.setStyleSheet("color: gray")
+        self.ble_status.setWordWrap(True)
+        self.ble_widget = QWidget()
+        bl = QVBoxLayout(self.ble_widget)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.addWidget(self.radios)
+        bl.addWidget(self.ble_status)
+        self._rows: dict[str, int] = {}
+        self._scanner: Optional[BleScanner] = None
+        self._active = False
+
         self.note = QLabel()
         self.note.setWordWrap(True)
         form = QFormLayout(self)
         form.addRow("Connection", self.kind)
-        self.dev_label = QLabel("Device")
-        form.addRow(self.dev_label, self.dev_widget)
-        self.tcp_label = QLabel("Host")
-        form.addRow(self.tcp_label, self.tcp_widget)
+        form.addRow(self.serial_widget)
+        form.addRow(self.ble_widget)
+        form.addRow(self.tcp_widget)
         form.addRow(self.note)
 
         self.kind.currentIndexChanged.connect(self._kind_changed)
-        self.scan.clicked.connect(self.refresh)
-        self.scanned.connect(self._scan_done)
+        self.host.textChanged.connect(self.changed)
+        self.serial.editTextChanged.connect(self.changed)
+        self.seen.connect(self._on_seen)
+        self.scan_error.connect(self._on_error)
+        if c.kind == "ble" and c.address:
+            self._add_row(c.address, c.name or c.address, None)
         self._kind_changed()
+
+    # Kind switching and scanning
 
     def _kind_changed(self) -> None:
         k = self.kind.currentData()
-        self.dev_widget.setVisible(k != "tcp")
-        self.dev_label.setVisible(k != "tcp")
+        self.serial_widget.setVisible(k == "serial")
+        self.ble_widget.setVisible(k == "ble")
         self.tcp_widget.setVisible(k == "tcp")
-        self.tcp_label.setVisible(k == "tcp")
-        self.scan.setText("Scan" if k == "ble" else "Refresh")
-        self.note.setText({"ble": "Pair the node with this computer first if your system requires it.",
-                           "serial": "", "tcp": "Meshtastic nodes serve their API on TCP port 4403."}[k])
-        self.device.clear()
-        self.device.setEditText(self._saved.get(k, ""))
+        self.note.setText({"ble": "", "serial": "",
+                           "tcp": "Meshtastic nodes serve their API on TCP port 4403."}[k])
         if k == "serial":
-            self.refresh()
+            self.refresh_serial()
+        self._update_scanning()
+        self.changed.emit()
 
-    def refresh(self) -> None:
-        k = self.kind.currentData()
-        if k == "serial":
-            self._fill(list_serial_ports())
-        elif k == "ble":
-            self.scan.setEnabled(False)
-            self.scan.setText("Scanning…")
+    def set_active(self, active: bool) -> None:
+        """Scanning only runs while this page is on screen (as on iOS, where it follows the connection tab)."""
+        self._active = active
+        self._update_scanning()
 
-            def work() -> None:
-                try:
-                    self.scanned.emit(scan_ble(), "")
-                except Exception as e:
-                    self.scanned.emit([], f"Bluetooth scan failed: {e}")
+    def _update_scanning(self) -> None:
+        want = self._active and self.kind.currentData() == "ble"
+        if want and self._scanner is None:
+            self.ble_status.setText("Scanning for Meshtastic devices…")
+            self.ble_status.setStyleSheet("color: gray")
+            self._scanner = BleScanner(self.seen.emit, self.scan_error.emit)
+            self._scanner.start()
+        elif not want and self._scanner is not None:
+            self._scanner.stop()
+            self._scanner = None
 
-            threading.Thread(target=work, daemon=True).start()
+    def _on_error(self, message: str) -> None:
+        if self._scanner is not None:
+            self._scanner.stop()
+            self._scanner = None
+        self.ble_status.setText(message)
+        self.ble_status.setStyleSheet("color: #c0392b")
 
-    def _scan_done(self, devices: list[MeshDevice], error: str) -> None:
-        self.scan.setEnabled(True)
-        self.scan.setText("Scan")
-        if error:
-            QMessageBox.warning(self, "Bluetooth", error)
-        self._fill(devices)
+    # BLE list
 
-    def _fill(self, devices: list[MeshDevice]) -> None:
-        current = self.device.currentText() or self._saved.get(self.kind.currentData(), "")
-        self._devices = devices
-        self.device.clear()
-        for d in devices:
-            self.device.addItem(d.label, d.address)
-        idx = self.device.findData(current)
+    def _add_row(self, address: str, name: str, rssi: Optional[int]) -> int:
+        row = self.radios.rowCount()
+        self.radios.insertRow(row)
+        self._rows[address] = row
+        self.radios.setItem(row, 0, QTableWidgetItem(""))
+        self.radios.setItem(row, 1, QTableWidgetItem(name))
+        r = QTableWidgetItem("" if rssi is None else f"{rssi} dBm")
+        r.setForeground(Qt.gray)
+        r.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.radios.setItem(row, 2, r)
+        self.radios.item(row, 0).setData(Qt.UserRole, address)
+        self._mark(row)
+        return row
+
+    def _mark(self, row: int) -> None:
+        address = self.radios.item(row, 0).data(Qt.UserRole)
+        self.radios.item(row, 0).setText("✓" if address == self.ble_selected[0] else "")
+
+    def _on_seen(self, address: str, name: str, rssi: int) -> None:
+        row = self._rows.get(address)
+        if row is None:
+            self._add_row(address, name, rssi)
+            return
+        self.radios.item(row, 1).setText(name)
+        self.radios.item(row, 2).setText(f"{rssi} dBm")
+        if address == self.ble_selected[0]:
+            self.ble_selected = (address, name)
+
+    def _pick(self, row: int, _col: int) -> None:
+        address = self.radios.item(row, 0).data(Qt.UserRole)
+        self.ble_selected = (address, self.radios.item(row, 1).text())
+        for r in range(self.radios.rowCount()):
+            self._mark(r)
+        self.changed.emit()
+
+    # Serial
+
+    def refresh_serial(self) -> None:
+        current = self.serial.currentText() or self._serial_saved
+        self.serial.clear()
+        for d in list_serial_ports():
+            self.serial.addItem(d.label, d.address)
+        idx = self.serial.findData(current)
         if idx >= 0:
-            self.device.setCurrentIndex(idx)
+            self.serial.setCurrentIndex(idx)
         else:
-            self.device.setEditText(current)
+            self.serial.setEditText(current)
+
+    def _serial_address(self) -> str:
+        idx, text = self.serial.currentIndex(), self.serial.currentText()
+        return self.serial.itemData(idx) if idx >= 0 and self.serial.itemText(idx) == text else text.strip()
+
+    # Result
+
+    def can_connect(self) -> bool:
+        k = self.kind.currentData()
+        return bool({"serial": self._serial_address(), "ble": self.ble_selected[0],
+                     "tcp": self.host.text().strip()}[k])
 
     def apply(self, settings: Settings) -> Optional[str]:
         k = self.kind.currentData()
-        if k == "tcp":
-            address = self.host.text().strip()
-        else:
-            idx = self.device.currentIndex()
-            text = self.device.currentText()
-            address = self.device.itemData(idx) if idx >= 0 and self.device.itemText(idx) == text else text.strip()
-        if not address:
-            return "Choose or enter a Meshtastic device."
-        settings.mesh.kind, settings.mesh.address, settings.mesh.port = k, address, self.port.value()
+        if not self.can_connect():
+            return "Choose a Meshtastic device." if k != "tcp" else "Enter the Meshtastic node's host name or address."
+        m = settings.mesh
+        m.kind, m.port = k, self.port.value()
+        m.address = {"serial": self._serial_address, "ble": lambda: self.ble_selected[0],
+                     "tcp": lambda: self.host.text().strip()}[k]()
+        m.name = self.ble_selected[1] if k == "ble" else ""
         return None
 
 
@@ -148,6 +233,8 @@ class AfskPage(QWidget):
         rnd = QPushButton("Random")
         rnd.clicked.connect(lambda: self.address.setText(random_ip()))
         self.level = QDoubleSpinBox()
+        self.level.setFixedWidth(120)
+        self.level.setAlignment(Qt.AlignRight)
         self.level.setRange(0.05, 1.0)
         self.level.setSingleStep(0.05)
         self.level.setValue(c.tx_level)
@@ -256,6 +343,50 @@ class KissPage(QWidget):
         return None
 
 
+class NetworkPage(QWidget):
+    changed = Signal()
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__()
+        self._saved = settings.network.interface
+        self.interface = QComboBox()
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(self.refresh)
+        row = QHBoxLayout()
+        row.addWidget(self.interface, 1)
+        row.addWidget(refresh)
+        form = QFormLayout(self)
+        form.addRow("Interface", row)
+        note = QLabel("Uses plain UDP over an interface that is already configured in the operating system "
+                      "(Ethernet, Wi-Fi, VPN). CQta messages are broadcast to that interface's broadcast address on "
+                      "UDP port 37373, and file transfers use UDP port 69. No elevated privileges and no tunnel "
+                      "interface are needed. Ping is not available.")
+        note.setWordWrap(True)
+        form.addRow(note)
+        self.interface.currentIndexChanged.connect(lambda _i: self.changed.emit())
+        self.refresh()
+
+    def refresh(self) -> None:
+        keep = self.interface.currentData() or self._saved
+        self.interface.blockSignals(True)
+        self.interface.clear()
+        for i in list_interfaces():
+            self.interface.addItem(i.label, i.name)
+        self.interface.setCurrentIndex(max(self.interface.findData(keep), 0))
+        self.interface.blockSignals(False)
+        self.changed.emit()
+
+    def can_connect(self) -> bool:
+        return self.interface.currentData() is not None
+
+    def apply(self, settings: Settings) -> Optional[str]:
+        name = self.interface.currentData()
+        if not name:
+            return "No network interface with an IPv4 address is available."
+        settings.network.interface = name
+        return None
+
+
 class ConnectionDialog(QDialog):
     def __init__(self, settings: Settings, parent=None) -> None:
         super().__init__(parent)
@@ -268,14 +399,18 @@ class ConnectionDialog(QDialog):
         self.transport.setCurrentIndex(max(self.transport.findData(settings.transport), 0))
         self.pages = QStackedWidget()
         self.mesh, self.afsk, self.kiss = MeshPage(settings), AfskPage(settings), KissPage(settings)
-        for p in (self.mesh, self.afsk, self.kiss):
+        self.network = NetworkPage(settings)
+        for p in (self.mesh, self.afsk, self.kiss, self.network):
             self.pages.addWidget(p)
         self.pages.setCurrentIndex(self.transport.currentIndex())
         self.transport.currentIndexChanged.connect(self.pages.setCurrentIndex)
+        self.transport.currentIndexChanged.connect(self._page_changed)
+        self.mesh.changed.connect(self._update_connect)
+        self.network.changed.connect(self._update_connect)
 
         self.tun = QCheckBox("Also create a system network interface (needs administrator rights)")
         self.tun.setChecked(settings.system_interface)
-        tun_note = QLabel("CQta chat, ping and file transfer work without it and without elevated privileges. "
+        self.tun_note = tun_note = QLabel("CQta chat, ping and file transfer work without it and without elevated privileges. "
                           "Enable this only to route other IP traffic through the radio; you will be asked for "
                           "permission when connecting.")
         tun_note.setWordWrap(True)
@@ -294,14 +429,35 @@ class ConnectionDialog(QDialog):
         layout.addWidget(self.tun)
         layout.addWidget(tun_note)
         layout.addWidget(buttons)
+        self._update_connect()
+
+    def _update_connect(self) -> None:
+        kind = self.transport.currentData()
+        self.connect_btn.setEnabled({"meshtastic": self.mesh.can_connect, "network": self.network.can_connect}
+                                    .get(kind, lambda: True)())
+        self.tun.setVisible(kind != "network")
+        self.tun_note.setVisible(kind != "network")
+
+    def _page_changed(self) -> None:
+        self.mesh.set_active(self.isVisible() and self.transport.currentData() == "meshtastic")
+        self._update_connect()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.mesh.set_active(self.transport.currentData() == "meshtastic")
+
+    def done(self, result: int) -> None:
+        self.mesh.set_active(False)
+        super().done(result)
 
     def _accept(self) -> None:
         kind = self.transport.currentData()
-        page = {"meshtastic": self.mesh, "afsk": self.afsk, "kiss": self.kiss}[kind]
+        page = {"meshtastic": self.mesh, "afsk": self.afsk, "kiss": self.kiss,
+                "network": self.network}[kind]
         error = page.apply(self.settings)
         if error:
-            QMessageBox.warning(self, "Connection", error)
+            dialogs.warning(self, "Connection", error)
             return
         self.settings.transport = kind
-        self.settings.system_interface = self.tun.isChecked()
+        self.settings.system_interface = self.tun.isChecked() and kind != "network"
         self.accept()

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QLinearGradient, QPainter, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from ..app.controller import Controller
@@ -12,37 +13,41 @@ from .bridge import CoreBridge
 from .main_window import MainWindow
 
 
-def make_pixmap(size: int) -> QPixmap:
-    pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    grad = QLinearGradient(0, 0, size, size)
-    grad.setColorAt(0, QColor("#2a7de1"))
-    grad.setColorAt(1, QColor("#14407a"))
-    p.setBrush(grad)
-    p.setPen(Qt.NoPen)
-    p.drawRoundedRect(QRectF(size * 0.04, size * 0.04, size * 0.92, size * 0.92), size * 0.2, size * 0.2)
-    p.setPen(QColor("white"))
-    font = QFont()
-    font.setBold(True)
-    font.setPixelSize(int(size * 0.42))
-    p.setFont(font)
-    p.drawText(QRectF(0, 0, size, size), Qt.AlignCenter, "CQ")
-    p.end()
-    return pm
+ICON_PATH = Path(__file__).resolve().parent.parent / "cqta.png"
 
 
 def make_icon() -> QIcon:
-    icon = QIcon()
-    for s in (16, 32, 64, 128, 256, 512):
-        icon.addPixmap(make_pixmap(s))
-    return icon
+    return QIcon(str(ICON_PATH))
+
+
+# Qt's macOS style draws cramped, unpadded text fields and spin boxes on current macOS releases; Fusion with a
+# little padding is consistent and readable. Windows and Linux keep their native styles.
+FIELD_STYLE = """
+QLineEdit { padding: 3px 6px; min-height: 20px; }
+QSpinBox, QDoubleSpinBox { padding: 2px 4px; min-height: 22px; }
+QComboBox { padding: 3px 8px; min-height: 20px; }
+QPushButton { padding: 3px 12px; min-height: 20px; }
+"""
+
+
+def apply_style(app: QApplication) -> None:
+    if sys.platform == "darwin":
+        app.setStyle("Fusion")
+        app.setStyleSheet(FIELD_STYLE)
 
 
 def run(argv: list[str]) -> int:
+    # The native macOS menu bar does not draw check marks on current macOS releases; Qt-drawn menus always do
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, True)
     app = QApplication(argv[:1])
+    if sys.platform == "win32":
+        import ctypes
+
+        # Own taskbar identity so Windows shows our icon instead of python.exe's
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("org.cqta.app")
+    apply_style(app)
     app.setApplicationName("CQta")
+    app.setDesktopFileName("cqta")
     app.setOrganizationName("cqta")
     icon = make_icon()
     app.setWindowIcon(icon)

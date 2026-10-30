@@ -19,6 +19,7 @@ CONFIG_TIMEOUT = 30.0
 class MeshConfig:
     kind: str = "serial"  # serial | ble | tcp
     address: str = ""  # port name, BLE address or host
+    name: str = ""  # BLE device name, remembered so the selection can be shown before the next scan
     port: int = TCP_PORT  # TCP only
 
     def make_link(self) -> MeshLink:

@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+ICON = ROOT / "src" / "cqta" / "cqta.png"
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 HERE = Path(__file__).resolve().parent
@@ -46,14 +47,19 @@ def make_icons() -> Path:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtGui import QGuiApplication
 
-    from cqta.gui.app import make_pixmap
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage
 
     app = QGuiApplication.instance() or QGuiApplication([])
+    source = QImage(str(ICON))
+
+    def make_pixmap(size: int):
+        return source.scaled(size, size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+
     out = BUILD / "icons"
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     make_pixmap(512).save(str(out / "cqta.png"))
-    make_pixmap(256).save(str(out / "cqta-256.png"))
     if sys.platform == "win32":
         make_pixmap(256).save(str(out / "cqta.ico"))
     if sys.platform == "darwin":
@@ -70,7 +76,7 @@ def make_icons() -> Path:
 def pyinstaller(name: str, extra: list) -> None:
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--name", name,
          "--distpath", DIST / "pyi", "--workpath", BUILD / "pyi", "--specpath", BUILD,
-         "--collect-all", "pytap3", "--collect-all", "sounddevice", "--collect-submodules", "bleak",
+         "--add-data", f"{ICON}{os.pathsep}cqta", "--collect-all", "pytap3", "--collect-all", "sounddevice", "--collect-submodules", "bleak",
          "--exclude-module", "tkinter", "--exclude-module", "PySide6.QtWebEngineCore",
          "--paths", ROOT / "src", *extra, HERE / "launcher.py"])
 
@@ -111,6 +117,8 @@ def build_macos(icons: Path) -> Path:
     name = f"cqta-{__version__}-macos-{arch()}"
     entitlements = HERE / "entitlements.plist"
     pyinstaller("CQta", [
+        *[a for m in ("objc", "CoreBluetooth", "libdispatch", "Foundation", "CoreFoundation", "UserNotifications")
+          for a in ("--collect-all", m)],
         "--windowed", "--onedir", "--icon", icons / "cqta.icns", "--osx-bundle-identifier", "org.cqta.app",
     ])
     app = DIST / "pyi" / "CQta.app"

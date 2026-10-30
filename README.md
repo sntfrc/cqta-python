@@ -11,6 +11,7 @@ Three ways to reach the radio network:
 | **Meshtastic** | USB serial, Bluetooth LE or TCP. The Meshtastic protocol (framing, handshake, private port 33) is implemented in this package; the `meshtastic` Python package is not used. |
 | **AFSK sound modem** | 1200 baud Bell-202 style AFSK over a sound card. Input and output audio devices are chosen explicitly. |
 | **KISS TCP TNC** | Raw IPv4 in KISS frames over a TCP connection (for example Direwolf). |
+| **Network interface** | Plain UDP over an already configured OS interface (Ethernet, Wi-Fi, VPN): chat goes to the interface's broadcast address on UDP 37373, file transfers use UDP 69. No elevated privileges or tunnel; ping is unavailable. |
 
 ## Privileges
 

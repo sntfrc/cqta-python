@@ -19,6 +19,7 @@ from ..transports.afsk import AFSKTransport
 from ..transports.base import LinkState, Transport, TransportInfo
 from ..transports.kiss import KissTransport
 from ..transports.mesh import MeshTransport
+from ..transports.network import NetworkTransport
 from ..tun.client import TunBridge
 from .chat import ChatModel
 from .files import FilesModel
@@ -55,13 +56,14 @@ class Controller:
         self.transport: Optional[Transport] = None
         self.bridge: Optional[TunBridge] = None
         self.tun_interface = ""
+        self._duty_state = (False, False)
 
         self.on_link: Callable[[LinkState, str], None] = lambda s, d: None
         self.on_info: Callable[[Optional[TransportInfo]], None] = lambda i: None
         self.on_log: Callable[[str], None] = lambda m: None
         self.on_ping: Callable[[PingEntry], None] = lambda p: None
-        self.on_nodes: Callable[[list[NodeRow]], None] = lambda n: None
-        self.on_duty: Callable[[bool, bool], None] = lambda limited, override: None
+        self.on_nodes: Callable[[str, list[NodeRow]], None] = lambda kind, rows: None  # kind: transport kind or ""
+        self.on_duty: Callable[[bool, bool, bool], None] = lambda limited, override, pending: None  # from the node
         self.on_duty_failed: Callable[[str], None] = lambda m: None
         self.on_tun: Callable[[str, str], None] = lambda state, detail: None  # state: off|starting|on|error
         self.on_stats: Callable[[dict[str, Any]], None] = lambda s: None
@@ -81,6 +83,8 @@ class Controller:
         f.transmit = self._transmit
         f.resolve_callsign = c.station_ip
         f.display_name = self._display_name
+        f.notify_enabled = lambda kind: bool(self.chat.notify.get(kind))
+        f.on_notification = lambda *a: self.chat.on_notification(*a)
 
     # Lifecycle
 
@@ -162,13 +166,15 @@ class Controller:
         try:
             if s.transport == "meshtastic":
                 t: Transport = MeshTransport(self.dispatcher, s.mesh)
-                t.on_duty_cycle = lambda limited, override: self.on_duty(limited, override)
-                t.on_duty_cycle_failed = lambda m: self.on_duty_failed(m)
+                t.on_duty_cycle = self._on_duty_cycle
+                t.on_duty_cycle_failed = self._on_duty_failed
                 t.on_nodes_changed = self._publish_nodes
             elif s.transport == "afsk":
                 t = AFSKTransport(self.dispatcher, s.afsk)
             elif s.transport == "kiss":
                 t = KissTransport(self.dispatcher, s.kiss)
+            elif s.transport == "network":
+                t = NetworkTransport(self.dispatcher, s.network)
             else:
                 raise ValueError(f"Unknown transport {s.transport}")
             t.on_packet = self._on_packet
@@ -177,6 +183,7 @@ class Controller:
             t.log = self.on_log
             self.transport = t
             t.start()
+            self.publish_nodes()
         except Exception as e:
             self.transport = None
             self.on_log(f"Cannot connect: {e}")
@@ -194,7 +201,9 @@ class Controller:
         self.chat.set_link(False)
         self.files.link_ready = False
         self.on_info(None)
-        self.on_nodes([])
+        self.on_nodes("", [])
+        self._duty_state = (False, False)
+        self.on_duty(False, False, False)
 
     def _on_state(self, state: LinkState, detail: str) -> None:
         ready = state is LinkState.READY
@@ -206,14 +215,28 @@ class Controller:
         self.chat.set_link(self.chat.link_ready, info.mtu)
         self.files.mtu = info.mtu
         self.on_info(info)
-        if self.settings.system_interface:
+        if self.settings.system_interface and self.transport is not None and self.transport.kind != "network":
             self._start_tun(info)
+
+    def _duty_pending(self) -> bool:
+        t = self.transport
+        return isinstance(t, MeshTransport) and t.engine.is_duty_cycle_change_pending
+
+    def _on_duty_cycle(self, limited: bool, override: bool) -> None:
+        self._duty_state = (limited, override)
+        self.on_duty(limited, override, self._duty_pending())
+
+    def _on_duty_failed(self, message: str) -> None:
+        self.on_duty_failed(message)
+        self.on_duty(*self._duty_state, self._duty_pending())
 
     def set_duty_cycle_override(self, enabled: bool) -> None:
         t = self.transport
         if isinstance(t, MeshTransport):
-            if not t.set_duty_cycle_override(enabled):
-                self.on_duty_failed("The node is not ready, or its region has no duty cycle limit")
+            if t.set_duty_cycle_override(enabled):
+                self.on_duty(*self._duty_state, True)
+            else:
+                self._on_duty_failed("The node is not ready, or its region has no duty cycle limit")
 
     # Packet routing
 
@@ -297,6 +320,9 @@ class Controller:
         if info is None:
             self.on_ping(PingEntry(key, target, seq, "failed", detail="Not connected"))
             return
+        if not self.transport.supports_icmp:
+            self.on_ping(PingEntry(key, target, seq, "failed", detail="Ping is not available over a network interface"))
+            return
         dest = self.files.resolve(target)
         if dest is None:
             self.on_ping(PingEntry(key, target, seq, "failed", detail="Unknown address or callsign"))
@@ -316,6 +342,37 @@ class Controller:
 
     # Nodes
 
+    def contacts(self) -> list[tuple[str, str]]:
+        """Callsigns with a known IP address, then tunnel nodes not already listed: (label, value) pairs."""
+        seen: set[str] = set()
+        result = []
+        for st in self.chat.snapshot()[2]:
+            if st.ip:
+                seen.add(st.ip)
+                result.append((f"{st.callsign} · {st.ip}", st.callsign))
+        t = self.transport
+        if isinstance(t, MeshTransport):
+            for num, n in sorted(t.engine.nodes.items(), key=lambda kv: -(t.engine.last_heard.get(kv[0]) or 0)):
+                ip = eng.node_ip(num)
+                if ip not in seen and ip != self._source_ip_text():
+                    seen.add(ip)
+                    result.append((f"{n.long_name or n.short_name or f'!{num:08x}'} · {ip}", ip))
+        return result
+
+    def _source_ip_text(self) -> str:
+        return ".".join(str(b) for b in self._source_ip())
+
+    def publish_nodes(self) -> None:
+        """Meshtastic nodes on a Meshtastic link; otherwise the stations heard on the link."""
+        t = self.transport
+        if t is None:
+            return
+        if isinstance(t, MeshTransport):
+            self._publish_nodes()
+            return
+        rows = [NodeRow(0, st.callsign, "", st.ip or "", st.last_heard) for st in self.chat.snapshot()[2]]
+        self.on_nodes(t.kind, rows)
+
     def _publish_nodes(self) -> None:
         t = self.transport
         if not isinstance(t, MeshTransport):
@@ -325,7 +382,7 @@ class Controller:
             rows.append(NodeRow(num, n.long_name or "", n.short_name or "", eng.node_ip(num),
                                 t.engine.last_heard.get(num)))
         rows.sort(key=lambda r: (-(r.last_heard or 0), r.num))
-        self.on_nodes(rows)
+        self.on_nodes(t.kind, rows)
 
     # TUN
 

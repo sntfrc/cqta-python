@@ -13,6 +13,7 @@ from ..core.protocol import DEFAULT_CALLSIGN
 from ..transports.afsk import AFSKConfig
 from ..transports.kiss import KissConfig
 from ..transports.mesh import MeshConfig
+from ..transports.network import NetworkConfig
 
 
 def config_dir() -> Path:
@@ -35,12 +36,13 @@ class Settings:
     beacon_interval: int = 120
     tftp_server: bool = False
     download_dir: str = ""
-    transport: str = "meshtastic"  # meshtastic | afsk | kiss
+    file_target: str = ""  # last recipient typed in the file-send box
+    transport: str = "meshtastic"  # meshtastic | afsk | kiss | network
     mesh: MeshConfig = field(default_factory=MeshConfig)
     afsk: AFSKConfig = field(default_factory=AFSKConfig)
     kiss: KissConfig = field(default_factory=KissConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
     system_interface: bool = False  # create an OS network interface (needs administrator rights)
-    duty_cycle_override: bool = False
 
     @staticmethod
     def path() -> Path:

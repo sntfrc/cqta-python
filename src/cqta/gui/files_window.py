@@ -8,11 +8,12 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFileDialog, QGroupBox, QHBoxLayout, QHeaderView,
-                               QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QMenu, QProgressBar, QPushButton, QTableWidget,
+                               QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from ..app.files import ReceivedFile
 from ..core.tftp import TransferInfo, TransferState
+from . import dialogs, timefmt
 from .bridge import CoreBridge
 
 
@@ -47,10 +48,19 @@ class FilesWindow(QWidget):
         send = QGroupBox("Send a file")
         self.target = QLineEdit()
         self.target.setPlaceholderText("Callsign or IPv4 address")
+        self.target.setText(bridge.ctrl.settings.file_target)
+        self.contacts = QToolButton()
+        self.contacts.setText("Known stations")
+        self.contacts.setToolTip("Choose from known stations")
+        self.contacts.setPopupMode(QToolButton.InstantPopup)
+        self.contacts_menu = QMenu(self.contacts)
+        self.contacts_menu.aboutToShow.connect(self._fill_contacts)
+        self.contacts.setMenu(self.contacts_menu)
         self.pick = QPushButton("Choose file and send…")
         row = QHBoxLayout(send)
         row.addWidget(QLabel("To:"))
         row.addWidget(self.target, 1)
+        row.addWidget(self.contacts)
         row.addWidget(self.pick)
 
         server = QGroupBox("Receiving")
@@ -71,7 +81,7 @@ class FilesWindow(QWidget):
         self.transfers = QTableWidget(0, 5)
         self.transfers.setHorizontalHeaderLabels(["Direction", "Peer", "File", "Progress", "Status"])
         self.received = QTableWidget(0, 3)
-        self.received.setHorizontalHeaderLabels(["File", "Size", "Received"])
+        self.received.setHorizontalHeaderLabels(["File", "Size", "Received (UTC)"])
         for t in (self.transfers, self.received):
             t.setEditTriggers(QAbstractItemView.NoEditTriggers)
             t.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -106,6 +116,15 @@ class FilesWindow(QWidget):
     def set_target(self, target: str) -> None:
         self.target.setText(target)
 
+    def _fill_contacts(self) -> None:
+        """Callsigns with a known IP, then tunnel nodes: the desktop version of the iOS address book menu."""
+        self.contacts_menu.clear()
+        contacts = self.bridge.query(self.bridge.ctrl.contacts)
+        if not contacts:
+            self.contacts_menu.addAction("No known contacts yet").setEnabled(False)
+        for label, value in contacts:
+            self.contacts_menu.addAction(label, lambda v=value: self.target.setText(v))
+
     def _update_folder(self) -> None:
         self.folder_label.setText(str(self.bridge.ctrl.files.folder))
 
@@ -135,15 +154,17 @@ class FilesWindow(QWidget):
     def _send(self) -> None:
         target = self.target.text().strip()
         if not target:
-            QMessageBox.information(self, "Send a file", "Enter a callsign or IPv4 address first.")
+            dialogs.information(self, "Send a file", "Enter a callsign or IPv4 address first.")
             return
+        self.bridge.ctrl.settings.file_target = target
+        self.bridge.post(self.bridge.ctrl.settings.save)
         path, _ = QFileDialog.getOpenFileName(self, "Send file")
         if not path:
             return
         files = self.bridge.ctrl.files
         error = self.bridge.query(lambda: files.send_file(path, target))
         if error:
-            QMessageBox.warning(self, "Send a file", error)
+            dialogs.warning(self, "Send a file", error)
 
     def set_transfers(self, transfers: list[TransferInfo]) -> None:
         self._transfers = transfers
@@ -173,13 +194,11 @@ class FilesWindow(QWidget):
 
     def set_files(self, files: list[ReceivedFile]) -> None:
         self._files = files
-        from datetime import datetime
-
         self.received.setRowCount(len(files))
         for i, f in enumerate(files):
             self.received.setItem(i, 0, QTableWidgetItem(f.name))
             self.received.setItem(i, 1, QTableWidgetItem(human_size(f.size)))
-            self.received.setItem(i, 2, QTableWidgetItem(datetime.fromtimestamp(f.modified).strftime("%Y-%m-%d %H:%M")))
+            self.received.setItem(i, 2, QTableWidgetItem(timefmt.date_hm(f.modified)))
         self._update_folder()
 
     def reveal_file(self, name: str) -> None:
@@ -204,5 +223,5 @@ class FilesWindow(QWidget):
         menu.exec(self.received.viewport().mapToGlobal(pos))
 
     def _delete(self, f: ReceivedFile) -> None:
-        if QMessageBox.question(self, "Delete file", f"Delete {f.name}?") == QMessageBox.Yes:
+        if dialogs.question(self, "Delete file", f"Delete {f.name}?"):
             self.bridge.post(lambda: self.bridge.ctrl.files.delete(f.path))

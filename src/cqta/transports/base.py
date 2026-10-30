@@ -32,6 +32,7 @@ class TransportInfo:
 
 class Transport:
     kind = "transport"
+    supports_icmp = True  # whether raw ICMP (ping) can be carried
 
     def __init__(self, dispatcher: Dispatcher) -> None:
         self.dispatcher = dispatcher

@@ -37,6 +37,15 @@ def sanitize_name(raw: str) -> str:
     return name or "received.bin"
 
 
+def _size_text(n: int) -> str:
+    size = float(n)
+    for unit in ("bytes", "KB", "MB"):
+        if size < 1024 or unit == "MB":
+            return f"{int(size)} bytes" if unit == "bytes" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{n} bytes"
+
+
 class FilesModel:
     def __init__(self, dispatcher) -> None:
         self.dispatcher = dispatcher
@@ -60,6 +69,8 @@ class FilesModel:
         self.on_status: Callable[[str], None] = lambda m: None
         self.on_file_received: Callable[[str, int], None] = lambda name, size: None
         self.on_incoming_started: Callable[[str, str], None] = lambda name, peer: None
+        self.notify_enabled: Callable[[str], bool] = lambda kind: False
+        self.on_notification: Callable[[str, str, str, Optional[str]], None] = lambda k, t, b, p: None
         self._timer = None
 
     def start(self) -> None:
@@ -148,7 +159,10 @@ class FilesModel:
         self.refresh()
 
     def _incoming_started(self, name: str, peer_ip: str, total: Optional[int]) -> None:
-        self.on_incoming_started(name, self.display_name(peer_ip))
+        peer = self.display_name(peer_ip)
+        self.on_incoming_started(name, peer)
+        if self.notify_enabled("file_start"):
+            self.on_notification("file_start", "Receiving a file", f"{sanitize_name(name)} from {peer}", None)
 
     def _send_datagram(self, local_port: int, destination: bytes, destination_port: int, payload: bytes) -> None:
         try:
@@ -175,4 +189,6 @@ class FilesModel:
             self.on_status(f"Could not save {candidate}: {e}")
             return None
         self.on_file_received(candidate, len(data))
+        if self.notify_enabled("file"):
+            self.on_notification("file", "File received", f"{candidate} ({_size_text(len(data))})", candidate)
         return candidate

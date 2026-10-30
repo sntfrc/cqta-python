@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMen
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QAbstractItemView)
 
 from ..app.chat import ConvInfo, Line, Station
+from . import timefmt
 from .bridge import CoreBridge
 from .transcript import TranscriptView
 
@@ -62,7 +63,7 @@ class StationsPanel(QWidget):
     ping = Signal(str)
     send_file = Signal(str)
 
-    HEADERS = ("Station", "Heard", "IP")
+    HEADERS = ("Station", "Heard (UTC)", "IP")
 
     def __init__(self, bridge: CoreBridge) -> None:
         super().__init__()
@@ -96,12 +97,16 @@ class StationsPanel(QWidget):
 
     @staticmethod
     def _age(t: float) -> str:
-        s = max(int(time.time() - t), 0)
-        if s < 60:
-            return f"{s} s ago"
-        if s < 3600:
-            return f"{s // 60} min ago"
-        return f"{s // 3600} h ago"
+        minutes = max(int(time.time() - t), 0) // 60
+        if minutes < 1:
+            return "<1 min ago"
+        if minutes < 60:
+            return f"{minutes} min ago"
+        return f"{minutes // 60} h ago"
+
+    @classmethod
+    def _heard(cls, t: float) -> str:
+        return f"{timefmt.hm(t)} ({cls._age(t)})"
 
     def set_stations(self, stations: list[Station]) -> None:
         self._stations = stations
@@ -109,7 +114,7 @@ class StationsPanel(QWidget):
         self.table.setRowCount(len(stations))
         for i, s in enumerate(stations):
             self.table.setItem(i, 0, QTableWidgetItem(s.callsign))
-            self.table.setItem(i, 1, QTableWidgetItem(self._age(s.last_heard)))
+            self.table.setItem(i, 1, QTableWidgetItem(self._heard(s.last_heard)))
             self.table.setItem(i, 2, QTableWidgetItem(s.ip or ""))
             if s.callsign == selected:
                 self.table.selectRow(i)
@@ -118,7 +123,7 @@ class StationsPanel(QWidget):
         for i, s in enumerate(self._stations):
             item = self.table.item(i, 1)
             if item:
-                item.setText(self._age(s.last_heard))
+                item.setText(self._heard(s.last_heard))
 
     def _menu(self, pos) -> None:
         row = self.table.rowAt(pos.y())
