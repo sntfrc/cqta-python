@@ -13,7 +13,7 @@ macOS: runs in a venv made from python.org's Python 3.13 (CQTA_MACOS_PYTHON over
   valid certificate (Apple Development / personal team), a self-signed certificate, then ad-hoc.
   With a Developer ID certificate the app and dmg are notarized and stapled so Gatekeeper accepts them, using
   APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD, or the notarytool keychain profile CQTA_NOTARY_PROFILE (default
-  "cqta-notary"). Without either, the build continues unnotarized.
+  "app-notary"). Without either, the build continues unnotarized.
 Requires: pip install -e .[build]
 """
 
@@ -38,7 +38,7 @@ from cqta import APP_ID, __version__  # noqa: E402
 
 MACOS_MIN = (12, 0)  # newest PySide6 wheels that still run on this release are 6.9
 MANYLINUX_IMAGE = "quay.io/pypa/manylinux_2_28_{arch}"
-DEFAULT_NOTARY_PROFILE = "cqta-notary"
+DEFAULT_NOTARY_PROFILE = "app-notary"
 MACOS_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13"
 
 

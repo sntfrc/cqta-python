@@ -78,7 +78,7 @@ needs `appimagetool` and docker) or a signed `.app` in a `.dmg` (macOS). The Git
   certificate, another valid certificate (Apple Development / personal team), a self-signed certificate, or an
   ad-hoc signature. With a Developer ID Application certificate the app and dmg are also notarized and stapled so
   Gatekeeper accepts them. Credentials come from `APPLE_ID` + `APPLE_TEAM_ID` + `APPLE_APP_PASSWORD`, or from a
-  `notarytool` keychain profile (`xcrun notarytool store-credentials cqta-notary`; `CQTA_NOTARY_PROFILE` selects
+  `notarytool` keychain profile (`xcrun notarytool store-credentials app-notary`; `CQTA_NOTARY_PROFILE` selects
   another name). With no Developer ID certificate or no credentials the build still succeeds, unnotarized.
 - **Linux:** the PyInstaller step runs in a `manylinux_2_28` docker container, so the AppImage needs glibc 2.28 or
   newer (e.g. Debian 10, Ubuntu 18.10, RHEL 8). `CQTA_NO_CONTAINER=1` builds against the host instead. PySide6 only
