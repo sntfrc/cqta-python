@@ -40,15 +40,19 @@ says so and exits with an error.
 ```
 sudo cqta --tunnel                       # the connection used last in the GUI
 sudo cqta --tunnel --mode meshtastic --meshtastic-serial /dev/ttyUSB0 --callsign IU4AAJ
-sudo cqta --tunnel --mode kiss --kiss-host 127.0.0.1 --kiss-port 8001
-sudo cqta --tunnel --mode afsk --afsk-input "USB Audio CODEC" --afsk-output "USB Audio CODEC"
+sudo cqta --tunnel 44.130.1.5/16 --mode kiss --kiss-host 127.0.0.1 --kiss-port 8001 --callsign IU4AAJ
+sudo cqta --tunnel 10.115.4.7/16 --mode afsk --input-device "USB Audio CODEC" --output-device "USB Audio CODEC" --callsign IU4AAJ --beacon-interval 120
 cqta --list serial|ble|audio|interfaces  # discover device names
+cqta --dump-config                       # print the command line equivalent to the GUI's current connection
 cqta --help                              # every option, with ranges and defaults
 ```
 
 With `--mode`, options apply to this session only, are not saved, and anything not given takes its default (never the
-GUI's saved value). The Network interface mode has no tunnel and is not available here. On Windows the windowed
+GUI's saved value). `--callsign` is required; the station's IPv4 address is the argument of `--tunnel` (required for
+`kiss` and `afsk`; with `meshtastic` it comes from the node). No beacons are sent unless `--beacon-interval` is given.
+The Network interface mode has no tunnel and is not available here. On Windows the windowed
 `cqta.exe` prints to the console it was started from.
+
 
 ## Tests
 
