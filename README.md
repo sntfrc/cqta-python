@@ -46,5 +46,13 @@ python packaging/build.py
 ```
 
 Produces `dist/cqta-<version>-<platform>-<architecture>` as a single-file `.exe` (Windows), `.AppImage` (Linux,
-needs `appimagetool`) or a signed `.app` in a `.dmg` (macOS). Set `CQTA_CODESIGN_IDENTITY` for a Developer ID
-signature (ad-hoc otherwise) and `CQTA_NOTARY_PROFILE` to notarize. The GitHub workflow builds all platforms.
+needs `appimagetool` and docker) or a signed `.app` in a `.dmg` (macOS). The GitHub workflow builds all platforms.
+
+- **macOS:** the build makes its own venv from python.org's Python 3.13 (`CQTA_MACOS_PYTHON` overrides the path) with
+  only wheels built for macOS 12 or older, so the app runs on macOS 12+; the build fails if any bundled binary needs
+  something newer. The app is signed with the first of: `CQTA_CODESIGN_IDENTITY`, a Developer ID Application
+  certificate, another valid certificate (Apple Development / personal team), a self-signed certificate, or an
+  ad-hoc signature. `CQTA_NOTARY_PROFILE` notarizes and staples (Developer ID only).
+- **Linux:** the PyInstaller step runs in a `manylinux_2_28` docker container, so the AppImage needs glibc 2.28 or
+  newer (e.g. Debian 10, Ubuntu 18.10, RHEL 8). `CQTA_NO_CONTAINER=1` builds against the host instead. PySide6 only
+  publishes x86_64 wheels for this baseline.
