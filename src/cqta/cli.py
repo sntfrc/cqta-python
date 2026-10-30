@@ -316,7 +316,9 @@ def _scan_ble(seconds: float = 6.0) -> list[tuple[str, str]]:
     scanner = BleScanner(lambda address, name, rssi: found.__setitem__(address, name), errors.append)
     print(f"Scanning for Bluetooth Meshtastic nodes for {seconds:.0f} s…", file=sys.stderr)
     scanner.start()
-    time.sleep(seconds)
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not errors:  # a failed scan ends early
+        time.sleep(0.2)
     scanner.stop()
     if errors and not found:
         raise RuntimeError(errors[0])

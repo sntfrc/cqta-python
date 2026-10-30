@@ -328,7 +328,10 @@ class BleScanner:
         loop, stop = self._loop, self._stop
         self._thread = None
         if loop is not None and stop is not None:
-            loop.call_soon_threadsafe(stop.set)
+            try:
+                loop.call_soon_threadsafe(stop.set)
+            except RuntimeError:
+                pass  # the scan already ended (for example because it failed) and closed its loop
 
     async def _run(self) -> None:
         from bleak import BleakScanner
