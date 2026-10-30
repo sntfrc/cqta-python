@@ -63,7 +63,7 @@ class StationsPanel(QWidget):
     ping = Signal(str)
     send_file = Signal(str)
 
-    HEADERS = ("Station", "Heard (UTC)", "IP")
+    HEADERS = ("Station", "Heard", "IP")
 
     def __init__(self, bridge: CoreBridge) -> None:
         super().__init__()

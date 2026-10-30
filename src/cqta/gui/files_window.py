@@ -26,13 +26,27 @@ def human_size(n: int) -> str:
     return f"{n} B"
 
 
+def open_path(path: str | Path, create: bool = False) -> None:
+    """Opens a file or folder with the system's default handler; a missing folder is created when asked to."""
+    if create:
+        Path(path).mkdir(parents=True, exist_ok=True)
+    target = os.path.normpath(str(path))
+    if sys.platform == "win32":
+        try:
+            os.startfile(target)  # Qt's file:// URL handling fails for some Windows paths
+            return
+        except OSError:
+            pass
+    QDesktopServices.openUrl(QUrl.fromLocalFile(target))
+
+
 def reveal(path: str) -> None:
     if sys.platform == "darwin":
         subprocess.Popen(["open", "-R", path])
     elif sys.platform == "win32":
         subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
     else:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).parent)))
+        open_path(Path(path).parent)
 
 
 class FilesWindow(QWidget):
@@ -81,7 +95,7 @@ class FilesWindow(QWidget):
         self.transfers = QTableWidget(0, 5)
         self.transfers.setHorizontalHeaderLabels(["Direction", "Peer", "File", "Progress", "Status"])
         self.received = QTableWidget(0, 3)
-        self.received.setHorizontalHeaderLabels(["File", "Size", "Received (UTC)"])
+        self.received.setHorizontalHeaderLabels(["File", "Size", "Received"])
         for t in (self.transfers, self.received):
             t.setEditTriggers(QAbstractItemView.NoEditTriggers)
             t.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -105,7 +119,7 @@ class FilesWindow(QWidget):
         self.target.returnPressed.connect(self._send)
         self.server.toggled.connect(self._server_toggled)
         change.clicked.connect(self._change_folder)
-        open_folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(files.folder))))
+        open_folder.clicked.connect(lambda: open_path(files.folder, create=True))
         self.received.cellDoubleClicked.connect(lambda r, _c: self._open(r))
         self.received.customContextMenuRequested.connect(self._received_menu)
         self.transfers.customContextMenuRequested.connect(self._transfer_menu)
@@ -209,7 +223,7 @@ class FilesWindow(QWidget):
 
     def _open(self, row: int) -> None:
         if 0 <= row < len(self._files):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(self._files[row].path))
+            open_path(self._files[row].path)
 
     def _received_menu(self, pos) -> None:
         row = self.received.rowAt(pos.y())

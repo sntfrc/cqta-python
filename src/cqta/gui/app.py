@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import signal
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from .. import APP_ID
 from ..app.controller import Controller
 from ..app.settings import Settings
 from .bridge import CoreBridge
@@ -37,6 +39,21 @@ def apply_style(app: QApplication) -> None:
         app.setStyleSheet(FIELD_STYLE)
 
 
+def register_windows_identity() -> None:
+    """Gives the AppUserModelID a display name and icon so toast notifications read "CQta" instead of the raw id."""
+    import winreg
+
+    icon_path = Path(os.environ.get("APPDATA", Path.home())) / "cqta" / "cqta.png"
+    try:
+        icon_path.parent.mkdir(parents=True, exist_ok=True)
+        make_icon().pixmap(256, 256).save(str(icon_path))
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\AppUserModelId\{APP_ID}") as key:
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "CQta")
+            winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, str(icon_path))
+    except OSError:
+        pass
+
+
 def run(argv: list[str]) -> int:
     # Same Qt-drawn menu bar on every platform, so check marks render consistently
     if sys.platform == "darwin":
@@ -46,7 +63,8 @@ def run(argv: list[str]) -> int:
         import ctypes
 
         # Own taskbar identity so Windows shows our icon instead of python.exe's
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("org.cqta.app")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+        register_windows_identity()
     apply_style(app)
     app.setApplicationName("CQta")
     app.setDesktopFileName("cqta")
@@ -68,8 +86,17 @@ def run(argv: list[str]) -> int:
     wake.timeout.connect(lambda: None)
     wake.start(200)
     window.prompt_first_run()
+    def finish() -> None:
+        ctrl.shutdown()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Skip interpreter teardown: PySide destroys widgets after Qt is gone and segfaults when the app is quit
+        # through the OS (Cmd+Q, Dock menu), which calls exit() directly
+        os._exit(0)
+
+    app.aboutToQuit.connect(finish)
     code = app.exec()
-    ctrl.shutdown()
+    finish()
     return code
 
 

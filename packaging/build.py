@@ -25,7 +25,7 @@ BUILD = ROOT / "build"
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from cqta import __version__  # noqa: E402
+from cqta import APP_ID, __version__  # noqa: E402
 
 
 def arch() -> str:
@@ -119,7 +119,7 @@ def build_macos(icons: Path) -> Path:
     pyinstaller("CQta", [
         *[a for m in ("objc", "CoreBluetooth", "libdispatch", "Foundation", "CoreFoundation", "UserNotifications")
           for a in ("--collect-all", m)],
-        "--windowed", "--onedir", "--icon", icons / "cqta.icns", "--osx-bundle-identifier", "org.cqta.app",
+        "--windowed", "--onedir", "--icon", icons / "cqta.icns", "--osx-bundle-identifier", APP_ID,
     ])
     app = DIST / "pyi" / "CQta.app"
     plist = app / "Contents" / "Info.plist"

@@ -47,9 +47,9 @@ class NodesWindow(QWidget):
         row.addWidget(self.ping_btn)
 
         self.nodes = QTableWidget(0, 4)
-        self.nodes.setHorizontalHeaderLabels(["Name", "Short", "IP", "Heard (UTC)"])
+        self.nodes.setHorizontalHeaderLabels(["Name", "Short", "IP", "Heard"])
         self.results = QTableWidget(0, 4)
-        self.results.setHorizontalHeaderLabels(["Target", "Seq", "Result", "Time (UTC)"])
+        self.results.setHorizontalHeaderLabels(["Target", "Seq", "Result", "Time"])
         for t in (self.nodes, self.results):
             t.setEditTriggers(QAbstractItemView.NoEditTriggers)
             t.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -93,7 +93,7 @@ class NodesWindow(QWidget):
         self.nodes_title.setText(f"<b>{title}</b>" + ("" if kind == "network" else " (double-click to ping)"))
         self.nodes.setColumnHidden(1, kind != "meshtastic")  # short names exist only on Meshtastic
         self.nodes.setHorizontalHeaderLabels(["Name" if kind == "meshtastic" else "Callsign" if kind else "Name",
-                                              "Short", "IP", "Heard (UTC)"])
+                                              "Short", "IP", "Heard"])
         t = self.nodes
         t.setSortingEnabled(False)  # rows would move while being filled
         t.setRowCount(len(rows))

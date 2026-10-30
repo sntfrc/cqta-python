@@ -50,7 +50,7 @@ class MainWindow(QMainWindow):
         lower.addWidget(self.right)
         lower.setStretchFactor(0, 0)
         lower.setStretchFactor(1, 1)
-        lower.setSizes([260, 740])
+        lower.setSizes([380, 620])
         main = QSplitter(Qt.Vertical)
         main.addWidget(self.broadcast)
         main.addWidget(lower)
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         m.addAction("Clear last heard", lambda: self.bridge.post(self.ctrl.chat.clear_stations))
         m.addAction("Clear all QSOs", self._clear_qsos)
 
-        m = self.menuBar().addMenu("&Window")
+        m = self.menuBar().addMenu("&Tools")
         m.addAction("Files", lambda: self._show(self.files_window))
         m.addAction("Nodes and Ping", lambda: self._show(self.nodes_window))
         m.addAction("Log", lambda: self._show(self.log_window))
@@ -444,8 +444,8 @@ class MainWindow(QMainWindow):
         from .. import __version__
 
         dialogs.about(self, "About CQta",
-                          f"<b>CQta {__version__}</b><br>Chat and file transfer over Meshtastic, KISS TNCs and "
-                          "AFSK sound modems, using IP tunnelling through pytap3.")
+                      f'CQta {__version__} - by Federico Santandrea IU4AAJ<br>'
+                      '<a href="https://santandrea.net/">https://santandrea.net/</a>')
 
     def prompt_first_run(self) -> None:
         if self.bridge.query(lambda: self.ctrl.chat.callsign) == DEFAULT_CALLSIGN:

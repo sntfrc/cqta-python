@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 
@@ -29,4 +30,6 @@ def question(parent: QWidget | None, title: str, text: str) -> bool:
 
 def about(parent: QWidget | None, title: str, text: str) -> None:
     box = _box(parent, QMessageBox.Icon.NoIcon, title, text, QMessageBox.StandardButton.Ok)
+    box.setTextFormat(Qt.TextFormat.RichText)
+    box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)  # makes the link clickable
     box.exec()

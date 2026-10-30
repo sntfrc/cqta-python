@@ -99,16 +99,16 @@ def test_dialogs_are_non_native(qapp):
     assert dialogs.question(None, "Close QSO", "Send QRT?") is True
 
 
-def test_times_are_utc(monkeypatch):
+def test_times_are_local(monkeypatch):
     import time
 
     from cqta.gui import timefmt
 
     monkeypatch.setenv("TZ", "Pacific/Auckland")
     time.tzset()
-    assert timefmt.hms(86400 + 3661) == "01:01:01Z"
-    assert timefmt.hm(0) == "00:00Z"
-    assert timefmt.date_hm(0) == "1970-01-01 00:00Z"
+    assert timefmt.hms(3661) == "13:01:01"  # Auckland is UTC+13 in 1970
+    assert timefmt.hm(0) == "12:00"
+    assert timefmt.date_hm(0) == "1970-01-01 12:00"
 
 
 def test_last_heard_shows_clock_and_age(qapp):

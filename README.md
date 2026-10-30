@@ -28,7 +28,7 @@ cqta            # or: python -m cqta
 ```
 
 Layout: broadcast panel on top; *Last heard* list and one tab per QSO below; files in a separate window
-(Window menu). Settings are stored in `%APPDATA%\cqta`, `~/Library/Application Support/cqta` or `~/.config/cqta`.
+(Tools menu). Settings are stored in `%APPDATA%\cqta`, `~/Library/Application Support/cqta` or `~/.config/cqta`.
 Received files go to `~/Documents/CQta` by default.
 
 ## Tests
