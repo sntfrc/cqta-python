@@ -13,11 +13,11 @@ def main(argv: list[str] | None = None) -> int:
         code = helper.run(argv[1:])
         sys.stdout.flush()
         os._exit(code)
-    if argv and argv[0] in ("-V", "--version"):
-        from . import __version__
+    argv = [a for a in argv if not a.startswith("-psn_")]  # added by macOS when launching an app
+    if argv:
+        from . import cli
 
-        print(f"cqta {__version__}")
-        return 0
+        return cli.main(argv)
     from .gui.app import run
 
     return run(argv)

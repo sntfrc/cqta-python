@@ -96,6 +96,12 @@ class FilesWindow(QWidget):
         self.contacts_menu.aboutToShow.connect(self._fill_contacts)
         self.contacts.setMenu(self.contacts_menu)
         self.pick = QPushButton("Choose file and send…")
+        self.send_box = send
+        self.note = QLabel("File transfer (TFTP) is not available in Network interface mode: on an ordinary IP "
+                           "network the operating system and its own tools handle that traffic, so CQta leaves it "
+                           "alone. Choose another connection type to send or receive files.")
+        self.note.setWordWrap(True)
+        self.note.hide()
         row = QHBoxLayout(send)
         row.addWidget(QLabel("To:"))
         row.addWidget(self.target, 1)
@@ -131,6 +137,7 @@ class FilesWindow(QWidget):
         self.received.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.note)
         layout.addWidget(send)
         layout.addWidget(server)
         layout.addWidget(QLabel("<b>Transfers</b>"))
@@ -151,6 +158,13 @@ class FilesWindow(QWidget):
         bridge.transfers.connect(self.set_transfers)
         bridge.files.connect(self.set_files)
         self._update_folder()
+        self.set_available(bridge.ctrl.settings.transport != "network")
+
+    def set_available(self, available: bool) -> None:
+        """File transfer does not work over the plain network interface mode; the options stay visible but disabled."""
+        self.send_box.setEnabled(available)
+        self.server.setEnabled(available)
+        self.note.setVisible(not available)
 
     def set_target(self, target: str) -> None:
         self.target.setText(target)

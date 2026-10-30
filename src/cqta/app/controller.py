@@ -72,6 +72,7 @@ class Controller:
         self._ping_seq = 0
         self._ping_key = 0
         self._tun_gen = 0
+        self._tun_stoppers: list[threading.Thread] = []
         self._stats_timer = None
 
         c = self.chat
@@ -113,6 +114,8 @@ class Controller:
             pass  # the process exits right after; a stuck device must not turn closing into an error
         finally:
             self.dispatcher.stop()
+            for t in self._tun_stoppers:  # make sure the helper has really been told to go away
+                t.join(timeout=5)
 
     def post(self, fn: Callable[[], None]) -> None:
         self.dispatcher.post(fn)
@@ -179,6 +182,8 @@ class Controller:
                 t = NetworkTransport(self.dispatcher, s.network)
             else:
                 raise ValueError(f"Unknown transport {s.transport}")
+            self.files.unavailable_reason = ("File transfer is not available over a network interface."
+                                             if s.transport == "network" else "")
             t.on_packet = self._on_packet
             t.on_state = self._on_state
             t.on_info = self._on_info
@@ -275,7 +280,7 @@ class Controller:
             if d.destination_port == proto.PORT:
                 self.chat.receive(d.payload, d.source)
                 return
-            if self.files.handle(d):
+            if self.transport_allows_files() and self.files.handle(d):
                 return
         else:
             echo = ipv4.parse_icmp_echo(packet)
@@ -284,6 +289,10 @@ class Controller:
                     return
         if self.bridge is not None and self.tun_interface:
             self.bridge.write(packet)
+
+    def transport_allows_files(self) -> bool:
+        t = self.transport
+        return t is None or t.kind != "network"
 
     def _handle_icmp(self, packet: bytes, echo: ipv4.IcmpEcho) -> bool:
         info = self._info()
@@ -437,7 +446,9 @@ class Controller:
         b, self.bridge = self.bridge, None
         self.tun_interface = ""
         if b is not None:
-            threading.Thread(target=b.stop, daemon=True).start()
+            stopper = threading.Thread(target=b.stop, daemon=True)
+            stopper.start()
+            self._tun_stoppers.append(stopper)
             self.on_tun("off", "")
 
     def set_system_interface(self, enabled: bool) -> None:

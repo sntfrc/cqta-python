@@ -59,6 +59,7 @@ class FilesModel:
 
         self.mtu = 200
         self.link_ready = False
+        self.unavailable_reason = ""  # set when file transfer cannot be used with the current connection
         self.transmit: Callable[[bytes], None] = lambda _: None
         self.source_ip: Callable[[], bytes] = lambda: bytes(4)
         self.resolve_callsign: Callable[[str], Optional[bytes]] = lambda c: None
@@ -105,6 +106,8 @@ class FilesModel:
 
     def send_file(self, path: str, target: str) -> Optional[str]:
         """Returns an error message, or None if the upload started."""
+        if self.unavailable_reason:
+            return self.unavailable_reason
         if not self.link_ready:
             return "The tunnel is not connected."
         ip = self.resolve(target)

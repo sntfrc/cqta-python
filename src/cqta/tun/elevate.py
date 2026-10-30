@@ -13,6 +13,16 @@ class ElevationError(Exception):
     pass
 
 
+# The command-line mode turns this off: it never prompts, it just fails when it lacks the rights
+prompt_allowed = True
+
+
+def required_rights_hint() -> str:
+    if sys.platform == "win32":
+        return "Run CQta from a terminal started with \"Run as administrator\"."
+    return "Run CQta as root (for example with sudo)."
+
+
 def is_elevated() -> bool:
     if sys.platform == "win32":
         import ctypes
@@ -36,6 +46,8 @@ def launch_elevated(cmd: list[str]) -> subprocess.Popen | None:
     """Start `cmd` with administrator rights. Returns a Popen when we can watch the process (else None)."""
     if is_elevated():
         return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not prompt_allowed:
+        raise ElevationError("Creating the tunnel needs administrator rights. " + required_rights_hint())
     if sys.platform == "darwin":
         return _macos(cmd)
     if sys.platform == "win32":

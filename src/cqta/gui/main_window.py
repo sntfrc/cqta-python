@@ -198,6 +198,7 @@ class MainWindow(QMainWindow):
     def _refresh_mode(self, settings) -> None:
         self._mode = settings
         self.tun_action.setVisible(settings.transport != "network")
+        self.files_window.set_available(settings.transport != "network")
         self.setWindowTitle(self._title(self._call))
 
     # Helpers

@@ -11,7 +11,7 @@ Three ways to reach the radio network:
 | **Meshtastic** | USB serial, Bluetooth LE or TCP. The Meshtastic protocol (framing, handshake, private port 33) is implemented in this package; the `meshtastic` Python package is not used. |
 | **AFSK sound modem** | 1200 baud Bell-202 style AFSK over a sound card. Input and output audio devices are chosen explicitly. |
 | **KISS TCP TNC** | Raw IPv4 in KISS frames over a TCP connection (for example Direwolf). |
-| **Network interface** | Plain UDP over an already configured OS interface (Ethernet, Wi-Fi, VPN): chat goes to the interface's broadcast address on UDP 37373, file transfers use UDP 69. No elevated privileges or tunnel; ping is unavailable. |
+| **Network interface** | Plain UDP over an already configured OS interface (Ethernet, Wi-Fi, VPN): chat goes to the interface's broadcast address on UDP 37373, file transfer is not offered (the OS handles TFTP). No elevated privileges or tunnel; ping is unavailable. |
 
 ## Privileges
 
@@ -30,6 +30,25 @@ cqta            # or: python -m cqta
 Layout: broadcast panel on top; *Last heard* list and one tab per QSO below; files in a separate window
 (Tools menu). Settings are stored in `%APPDATA%\cqta`, `~/Library/Application Support/cqta` or `~/.config/cqta`.
 Received files go to `~/Documents/CQta` by default.
+
+## Command line (no GUI)
+
+`cqta --tunnel` runs headless and keeps an OS tunnel up until Ctrl+C / SIGTERM, then tears it down. It **never asks for
+administrator rights**: start it as root (`sudo cqta --tunnel`) or from an elevated terminal on Windows, otherwise it
+says so and exits with an error.
+
+```
+sudo cqta --tunnel                       # the connection used last in the GUI
+sudo cqta --tunnel --mode meshtastic --meshtastic-serial /dev/ttyUSB0 --callsign IU4AAJ
+sudo cqta --tunnel --mode kiss --kiss-host 127.0.0.1 --kiss-port 8001
+sudo cqta --tunnel --mode afsk --afsk-input "USB Audio CODEC" --afsk-output "USB Audio CODEC"
+cqta --list serial|ble|audio|interfaces  # discover device names
+cqta --help                              # every option, with ranges and defaults
+```
+
+With `--mode`, options apply to this session only, are not saved, and anything not given takes its default (never the
+GUI's saved value). The Network interface mode has no tunnel and is not available here. On Windows the windowed
+`cqta.exe` prints to the console it was started from.
 
 ## Tests
 
