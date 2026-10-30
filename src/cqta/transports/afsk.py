@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -140,11 +141,16 @@ class AFSKTransport(Transport):
         audio, self._audio = self._audio, None
         self._port = None
         if audio is not None:
-            try:
-                audio.on_samples = lambda _: None
-                audio.stop()
-            except Exception:
-                pass
+            audio.on_samples = lambda _: None
+
+            def stop_audio() -> None:
+                try:
+                    audio.stop()
+                except Exception:
+                    pass
+
+            # Closing a PortAudio stream can block for a long time (notably on Windows); never stall the core on it
+            threading.Thread(target=stop_audio, name="cqta-audio-stop", daemon=True).start()
 
     def _fail(self, reason: str) -> None:
         self._close_audio()

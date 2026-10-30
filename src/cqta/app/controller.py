@@ -109,6 +109,8 @@ class Controller:
 
         try:
             self.query(stop, timeout=5)
+        except TimeoutError:
+            pass  # the process exits right after; a stuck device must not turn closing into an error
         finally:
             self.dispatcher.stop()
 
