@@ -244,3 +244,20 @@ def test_nodes_window_follows_transport(qapp):
     assert "Meshtastic nodes" in w.nodes_title.text() and not w.nodes.isColumnHidden(1)
     w.set_nodes([], "")
     assert w.nodes.rowCount() == 0
+
+
+def test_connect_disabled_while_connected(qapp, monkeypatch):
+    from cqta.transports.base import LinkState
+
+    monkeypatch.setattr(Settings, "save", lambda self, path=None: None)
+    ctrl = Controller(Settings())
+    ctrl.start()
+    try:
+        w = MainWindow(CoreBridge(ctrl))
+        assert w.connect_action.isEnabled()
+        for state, enabled in ((LinkState.CONNECTING, False), (LinkState.READY, False), (LinkState.STOPPED, True)):
+            w._link(state, "")
+            assert w.connect_action.isEnabled() is enabled
+            assert w.disconnect_action.isEnabled() is (not enabled)
+    finally:
+        ctrl.shutdown()

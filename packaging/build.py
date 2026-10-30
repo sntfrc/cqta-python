@@ -76,7 +76,7 @@ def make_icons() -> Path:
 def pyinstaller(name: str, extra: list) -> None:
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--name", name,
          "--distpath", DIST / "pyi", "--workpath", BUILD / "pyi", "--specpath", BUILD,
-         "--add-data", f"{ICON}{os.pathsep}cqta", "--collect-all", "pytap3", "--collect-all", "sounddevice", "--collect-submodules", "bleak",
+         "--add-data", f"{ICON}{os.pathsep}cqta", "--add-data", f"{ICON.with_name('cqta-tray.png')}{os.pathsep}cqta", "--collect-all", "pytap3", "--collect-all", "sounddevice", "--collect-submodules", "bleak",
          "--exclude-module", "tkinter", "--exclude-module", "PySide6.QtWebEngineCore",
          "--paths", ROOT / "src", *extra, HERE / "launcher.py"])
 

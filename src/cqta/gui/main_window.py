@@ -294,7 +294,7 @@ class MainWindow(QMainWindow):
     def _link(self, state: LinkState, detail: str) -> None:
         text = CoreBridgeText.state(state)
         self.link_label.setText(f"{text}: {detail}" if detail and state is not LinkState.READY else text)
-        self.connect_action.setEnabled(True)
+        self.connect_action.setEnabled(state is LinkState.STOPPED)  # disconnect first to change the connection
         self.disconnect_action.setEnabled(state is not LinkState.STOPPED)
         if state is not LinkState.READY:
             self.duty_action.setVisible(False)
@@ -350,6 +350,8 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+        if not kind:
+            return
         if kind == "direct" and target:
             self.open_qso(str(target))
         elif kind in ("file", "file_start"):

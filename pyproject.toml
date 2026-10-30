@@ -24,10 +24,8 @@ dependencies = [
 dev = ["pytest>=8"]
 build = ["pyinstaller>=6.6"]
 
-[project.scripts]
-cqta = "cqta.__main__:main"
-
 [project.gui-scripts]
+cqta = "cqta.__main__:main"
 cqta-gui = "cqta.__main__:main"
 
 [tool.setuptools.dynamic]
@@ -37,7 +35,7 @@ version = { attr = "cqta.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-cqta = ["cqta.png"]
+cqta = ["cqta.png", "cqta-tray.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

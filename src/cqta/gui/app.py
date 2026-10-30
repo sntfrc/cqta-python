@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import signal
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -37,8 +38,9 @@ def apply_style(app: QApplication) -> None:
 
 
 def run(argv: list[str]) -> int:
-    # The native macOS menu bar does not draw check marks on current macOS releases; Qt-drawn menus always do
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, True)
+    # Same Qt-drawn menu bar on every platform, so check marks render consistently
+    if sys.platform == "darwin":
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, True)
     app = QApplication(argv[:1])
     if sys.platform == "win32":
         import ctypes
@@ -56,6 +58,15 @@ def run(argv: list[str]) -> int:
     ctrl.start()
     window = MainWindow(bridge, icon)
     window.show()
+    # Python only handles SIGINT between bytecodes, so wake the Qt loop regularly to let Ctrl+C through
+    def interrupt(*_) -> None:
+        app.closeAllWindows()  # also ends any modal dialog's nested loop
+        QTimer.singleShot(0, app.quit)
+
+    signal.signal(signal.SIGINT, interrupt)
+    wake = QTimer()
+    wake.timeout.connect(lambda: None)
+    wake.start(200)
     window.prompt_first_run()
     code = app.exec()
     ctrl.shutdown()
