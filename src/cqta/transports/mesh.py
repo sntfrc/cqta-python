@@ -115,10 +115,12 @@ class MeshTransport(Transport):
             try:
                 link.open()
             except LinkError as e:
-                self.dispatcher.post(lambda: self._on_closed(gen, str(e)))
+                reason = str(e)
+                self.dispatcher.post(lambda: self._on_closed(gen, reason))
                 return
             except Exception as e:
-                self.dispatcher.post(lambda: self._on_closed(gen, f"{type(e).__name__}: {e}"))
+                reason = f"{type(e).__name__}: {e}"
+                self.dispatcher.post(lambda: self._on_closed(gen, reason))
                 return
             self.dispatcher.post(lambda: self._on_opened(gen))
 

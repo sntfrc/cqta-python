@@ -11,7 +11,8 @@ def main(argv: list[str] | None = None) -> int:
         from .tun import helper
 
         code = helper.run(argv[1:])
-        sys.stdout.flush()
+        if sys.stdout is not None:
+            sys.stdout.flush()
         os._exit(code)
     argv = [a for a in argv if not a.startswith("-psn_")]  # added by macOS when launching an app
     if argv:

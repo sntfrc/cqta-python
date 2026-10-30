@@ -414,7 +414,8 @@ class Controller:
             try:
                 name = bridge.start(ip, mask, info.mtu)
             except Exception as e:
-                self.dispatcher.post(lambda: self._tun_failed(gen, str(e) or type(e).__name__))
+                reason = str(e) or type(e).__name__
+                self.dispatcher.post(lambda: self._tun_failed(gen, reason))
                 return
             self.dispatcher.post(lambda: self._tun_ready(gen, name))
 

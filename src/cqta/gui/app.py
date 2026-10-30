@@ -98,8 +98,12 @@ def run(argv: list[str]) -> int:
     window.prompt_first_run()
     def finish() -> None:
         ctrl.shutdown()
-        sys.stdout.flush()
-        sys.stderr.flush()
+        for stream in (sys.stdout, sys.stderr):  # None in a windowed Windows build
+            if stream is not None:
+                try:
+                    stream.flush()
+                except (OSError, ValueError):
+                    pass
         # Skip interpreter teardown: PySide destroys widgets after Qt is gone and segfaults when the app is quit
         # through the OS (Cmd+Q, Dock menu), which calls exit() directly
         os._exit(0)

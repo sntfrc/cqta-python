@@ -147,7 +147,8 @@ class KissTransport(Transport):
                     for frame in decoder.feed(data):
                         self.dispatcher.post(lambda f=frame: self._on_kiss(gen, f))
             except Exception as e:
-                self.dispatcher.post(lambda: self._fail(gen, f"Connection lost: {e}"))
+                reason = f"Connection lost: {e}"
+                self.dispatcher.post(lambda: self._fail(gen, reason))
 
         threading.Thread(target=work, name="cqta-kiss", daemon=True).start()
 
