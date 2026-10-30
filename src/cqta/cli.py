@@ -377,6 +377,43 @@ def print_dump_config() -> int:
 _attached_console = False
 
 
+def _attach_to_ancestor_console(kernel32) -> bool:
+    """Attach to the console of the nearest ancestor that has one. The parent alone is not enough: the packaged
+    one-file exe runs as a child of its own bootloader process, which is a GUI program without a console."""
+    import ctypes
+    from ctypes import wintypes
+
+    if kernel32.AttachConsole(-1):
+        return True
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("pid", wintypes.DWORD),
+                    ("heap", ctypes.c_size_t), ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                    ("parent", wintypes.DWORD), ("priority", wintypes.LONG), ("flags", wintypes.DWORD),
+                    ("exe", wintypes.WCHAR * 260)]
+
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    snapshot = kernel32.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+        return False
+    parents: dict[int, int] = {}
+    entry = Entry()
+    entry.size = ctypes.sizeof(Entry)
+    ok = kernel32.Process32FirstW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
+    while ok:
+        parents[entry.pid] = entry.parent
+        ok = kernel32.Process32NextW(ctypes.c_void_p(snapshot), ctypes.byref(entry))
+    kernel32.CloseHandle(ctypes.c_void_p(snapshot))
+
+    pid, seen = os.getpid(), set()
+    while pid in parents and pid not in seen:
+        seen.add(pid)
+        pid = parents[pid]
+        if pid and kernel32.AttachConsole(pid):
+            return True
+    return False
+
+
 def attach_console() -> None:
     """The Windows GUI executable has no console of its own and Python leaves sys.stdout/sys.stderr unset.
 
@@ -405,7 +442,7 @@ def attach_console() -> None:
     out = sys.stdout or inherited(-11)
     err = sys.stderr or inherited(-12)
     if out is None or err is None:
-        if kernel32.AttachConsole(-1):  # the parent process's console
+        if _attach_to_ancestor_console(kernel32):
             _attached_console = True
             encoding = f"cp{kernel32.GetConsoleOutputCP()}"
             try:
@@ -441,6 +478,10 @@ def release_console() -> None:
     written = wintypes.DWORD()
     kernel32.WriteConsoleInputW(ctypes.c_void_p(handle), records, 2, ctypes.byref(written))
     kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
+# Per-transmission AFSK status changes; far too chatty for a console.
+_ACTIVITY = {"Listening", "Receiving signal", "Transmitting"}
 
 
 def _say(message: str, error: bool = False) -> None:
@@ -531,7 +572,7 @@ def run_tunnel(settings: Settings) -> int:
             return
         if state is LinkState.STOPPED:
             fail(detail or "The connection was closed")
-        elif detail and detail != last_status[0]:
+        elif detail and detail not in _ACTIVITY and detail != last_status[0]:
             last_status[0] = detail
             _say(detail)
 
