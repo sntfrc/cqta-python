@@ -6,9 +6,12 @@ command line so other local users cannot see it in the process list and hijack t
 
 from __future__ import annotations
 
+import atexit
 import ipaddress
 import os
+import signal
 import socket
+import subprocess
 import sys
 import threading
 
@@ -56,9 +59,46 @@ def run(argv: list[str]) -> int:
     except Exception as e:
         send(wire.T_STATUS, f"error {e}".encode())
         return 1
-    send(wire.T_STATUS, f"ok {dev.name}".encode())
-
     stop = threading.Event()
+    cleanup_lock = threading.Lock()
+    cleaned = False
+
+    def cleanup() -> None:
+        """Idempotent; also runs from atexit so the interface and its routes never outlive the helper."""
+        nonlocal cleaned
+        with cleanup_lock:
+            if cleaned:
+                return
+            cleaned = True
+        stop.set()
+        if sys.platform == "darwin":
+            try:  # normally vanishes with the utun, but do not rely on it
+                net = ipaddress.ip_network(f"{ip}/{netmask}", strict=False)
+                subprocess.run(["route", "-n", "delete", "-net", str(net), "-interface", dev.name],
+                               capture_output=True, timeout=5)
+            except Exception:
+                pass
+        try:
+            dev.close()
+        except Exception:
+            pass
+
+    def on_signal(*_: object) -> None:
+        stop.set()
+        try:
+            sock.shutdown(socket.SHUT_RDWR)  # wakes the main loop so it can clean up
+        except OSError:
+            pass
+
+    atexit.register(cleanup)
+    for name in ("SIGTERM", "SIGINT", "SIGHUP", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            try:
+                signal.signal(sig, on_signal)
+            except (OSError, ValueError):
+                pass
+    send(wire.T_STATUS, f"ok {dev.name}".encode())
 
     def tun_to_app() -> None:
         try:
@@ -90,9 +130,5 @@ def run(argv: list[str]) -> int:
                         pass
     except OSError:
         pass
-    stop.set()
-    try:
-        dev.close()
-    except Exception:
-        pass
+    cleanup()
     return 0  # the caller must exit with os._exit: the reader thread may be stuck in a read close() can't interrupt

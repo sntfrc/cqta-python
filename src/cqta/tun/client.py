@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import hmac
 import os
 import secrets
@@ -51,6 +52,7 @@ class TunBridge:
                 os.remove(token_file)
             except OSError:
                 pass
+        atexit.register(self.stop)  # closing the socket makes the helper remove the interface even if the app exits abruptly
         self._sock = conn
         reader = wire.Reader()
         conn.settimeout(30)
