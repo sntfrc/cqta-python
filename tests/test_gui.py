@@ -14,6 +14,7 @@ from cqta.app.settings import Settings
 from cqta.gui.bridge import CoreBridge
 from cqta.gui.connection_dialog import ConnectionDialog
 from cqta.gui.main_window import MainWindow
+from cqta.transports.base import TransportInfo
 
 
 @pytest.fixture(scope="module")
@@ -40,6 +41,8 @@ def test_main_window_flow(qapp, tmp_path, monkeypatch):
     try:
         w = MainWindow(bridge)
         w.show()
+        w._info(TransportInfo(bytes([10, 115, 18, 52]), bytes(4), bytes(4), bytes(4), 200))
+        assert w.ip_label.text() == "10.115.18.52"
         w.open_qso("W2XYZ")
         pump(qapp)
         assert "W2XYZ" in w.qsos

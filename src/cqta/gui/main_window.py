@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QApplication, QInputDialog, QLabel, QMainWindow, 
                                QTabWidget, QWidget)
 
 from ..app.chat import ConvInfo
+from ..core.ipv4 import bytes_to_ip
 from ..core.protocol import DEFAULT_CALLSIGN
 from ..transports.base import LinkState
 from . import dialogs
@@ -326,7 +327,7 @@ class MainWindow(QMainWindow):
             self.level.hide()
 
     def _info(self, info) -> None:
-        self.ip_label.setText(f"{info.my_ip}" if info else "")
+        self.ip_label.setText(bytes_to_ip(info.my_ip) if info else "")
 
     def _stats(self, st: dict) -> None:
         self.stats_label.setText(f"TX {st.get('tx', 0)}  RX {st.get('rx', 0)}")
