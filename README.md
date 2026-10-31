@@ -1,8 +1,8 @@
 # CQta for desktop
 
-Cross-platform (Windows, macOS, Linux) Python port of the CQta iOS app: amateur-radio style chat (QSOs, CQ calls,
-broadcast), ping and TFTP file transfer over an IP-over-radio link. See the iOS repository's `PROTOCOL.md` for the
-wire protocol.
+Cross-platform (Windows, macOS, Linux) CQta desktop app and reference implementation: amateur-radio style chat (QSOs,
+CQ calls, broadcast), ping and TFTP file transfer over an IP-over-radio link. The canonical [protocol specification](PROTOCOL.md)
+is maintained here.
 
 Three ways to reach the radio network:
 

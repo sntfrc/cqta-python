@@ -1,4 +1,4 @@
-"""CQta text protocol: ``SOURCE>DESTINATION NUMBER{REQUESTS}[NO-CONTENT]:TEXT`` (see the iOS PROTOCOL.md)."""
+"""CQta text protocol: ``SOURCE>DESTINATION NUMBER{REQUESTS}[NO-CONTENT]:TEXT`` (see cqta-python/PROTOCOL.md)."""
 
 from __future__ import annotations
 
